@@ -1,12 +1,25 @@
+import { useState } from 'react';
 import { Music2, User } from 'lucide-react';
 import { cx } from './ui';
 
 /** Square artwork with a styled gradient placeholder. `round` is for artist avatars. */
 export function Artwork({ src, alt, round, className }: { src: string | null | undefined; alt: string; round?: boolean; className?: string }) {
+  const [failed, setFailed] = useState(false);
+
+  const resolvedSrc = src && src.startsWith('/') && !src.startsWith('//') && !src.startsWith(import.meta.env.BASE_URL)
+    ? `${import.meta.env.BASE_URL}${src.replace(/^\//, '')}`
+    : src;
+
   return (
     <div className={cx('relative aspect-square overflow-hidden bg-surface shadow-sm transition-transform duration-300', round ? 'rounded-full' : 'rounded-card', className)}>
-      {src ? (
-        <img src={src} alt={alt} loading="lazy" className="h-full w-full object-cover transition-transform duration-300 hover:scale-105" />
+      {resolvedSrc && !failed ? (
+        <img
+          src={resolvedSrc}
+          alt={alt}
+          loading="lazy"
+          onError={() => setFailed(true)}
+          className="h-full w-full object-cover transition-transform duration-300 hover:scale-105"
+        />
       ) : (
         <div
           className={cx(

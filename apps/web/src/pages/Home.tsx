@@ -16,6 +16,7 @@ import type { HomeData } from '../lib/types';
 import { ArtistScroller, ArtistCard } from '../components/ArtistViews';
 import { SongList, SongScroller } from '../components/SongViews';
 import { EmptyState, ErrorState, LinkButton, Page, Section, Skeleton, Chip } from '../components/ui';
+import heroImg from '../assets/hero.jpg';
 
 const DISTRICT_CYCLE = [
   { name: 'Kampala', region: 'Central' },
@@ -46,7 +47,7 @@ function Hero() {
       {/* Background Image with optimized visibility & subtle ambient treatment */}
       <div className="absolute inset-0 z-0">
         <img
-          src="/hero.jpg"
+          src={heroImg}
           alt="WaXo Music Culture"
           className="h-full w-full object-cover object-center brightness-[0.72] contrast-[1.08] saturate-[1.15]"
         />

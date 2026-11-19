@@ -22,6 +22,7 @@ import { useTheme } from '../lib/theme';
 import { usePlayer } from '../lib/player';
 import { PlayerBar } from './PlayerBar';
 import { btn, cx, Page } from './ui';
+import logoImg from '../assets/logo.png';
 
 const NAV = [
   { to: '/', label: 'Home', end: true, icon: Home, iconCls: 'text-zinc-400 group-hover:text-fg' },
@@ -34,7 +35,7 @@ export function Logo({ className, imgClassName, to = '/' }: { className?: string
   return (
     <Link to={to} aria-label="WaXo" className={cx('flex items-center shrink-0 transition-all duration-200 hover:opacity-90', className)}>
       <img
-        src="/logo.png"
+        src={logoImg}
         alt="WaXo"
         className={cx('object-contain drop-shadow-sm', imgClassName || 'h-10 sm:h-12 w-auto max-w-[150px] sm:max-w-[180px]')}
       />
