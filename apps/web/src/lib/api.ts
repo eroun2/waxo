@@ -95,18 +95,33 @@ export function saveMySongs(songs: any[]) {
 }
 
 export function getAdminSongs(): any[] {
+  let songs: any[] = [];
   try {
     const raw = localStorage.getItem('waxo.admin_songs');
     if (raw) {
-      const songs: any[] = JSON.parse(raw);
-      const cleaned = songs.filter((s) => !['song-1', 'song-2', 'song-3'].includes(s.id));
-      if (cleaned.length !== songs.length) {
-        saveAdminSongs(cleaned);
-      }
-      return cleaned;
+      songs = JSON.parse(raw);
     }
   } catch {}
-  return [...MOCK_ADMIN_SONGS.items];
+  songs = songs.filter((s) => !['song-1', 'song-2', 'song-3'].includes(s.id));
+
+  // Merge any songs from mySongs so uploaded songs are always represented in admin review
+  const mySongs = getMySongs();
+  for (const ms of mySongs) {
+    const existing = songs.find((s) => s.id === ms.id);
+    if (!existing) {
+      songs.unshift({
+        ...ms,
+        artist_name: ms.artist_name || ms.artist?.stage_name || 'Artist',
+        artist: ms.artist || { id: 'art-current', stage_name: ms.artist_name || 'Artist', slug: 'artist' },
+      });
+    } else {
+      existing.status = ms.status;
+      existing.process_status = ms.process_status;
+      existing.stream_count = ms.stream_count;
+      existing.download_count = ms.download_count;
+    }
+  }
+  return songs;
 }
 
 export function saveAdminSongs(songs: any[]) {
@@ -116,32 +131,39 @@ export function saveAdminSongs(songs: any[]) {
 }
 
 export function getAdminArtists(): any[] {
+  let list: any[] = [];
   try {
     const raw = localStorage.getItem('waxo.admin_artists');
     if (raw) {
-      const artists: any[] = JSON.parse(raw);
-      const cleaned = artists.filter((a) => !['art-1', 'art-2'].includes(a.id));
-      if (cleaned.length !== artists.length) {
-        saveAdminArtists(cleaned);
-      }
-      return cleaned;
+      list = JSON.parse(raw);
     }
   } catch {}
-  const list = [...MOCK_ADMIN_ARTISTS.items];
+  list = list.filter((a) => !['art-1', 'art-2'].includes(a.id));
+
   const registered = getRegisteredUsers().filter((u) => u.role === 'artist');
   for (const r of registered) {
-    if (!list.find((a) => a.id === r.id || a.email.toLowerCase() === r.email.toLowerCase())) {
-      list.push({
+    const existing = list.find((a) => a.id === r.id || a.email?.toLowerCase() === r.email?.toLowerCase());
+    if (!existing) {
+      list.unshift({
         id: r.id,
         stage_name: r.stage_name || r.display_name,
+        real_name: r.real_name || r.stage_name || r.display_name,
         slug: r.artist_slug || 'artist',
         email: r.email,
+        email_verified: !!r.email_verified_at,
+        phone: r.phone || '',
         approval_status: r.artist_approval || 'pending',
         is_verified: r.artist_verified || false,
+        is_featured: false,
         district: 'Kampala',
+        town: r.town || 'Kampala Central',
+        bio: r.bio || '',
         follower_count: 0,
         created_at: new Date().toISOString(),
       });
+    } else {
+      existing.approval_status = r.artist_approval || existing.approval_status || 'pending';
+      existing.is_verified = r.artist_verified !== undefined && r.artist_verified !== null ? r.artist_verified : existing.is_verified;
     }
   }
   return list;
@@ -193,6 +215,82 @@ export function saveAdminContentReports(reports: any[]) {
   try {
     localStorage.setItem('waxo.admin_reports', JSON.stringify(reports));
   } catch {}
+}
+
+export interface AuditEntry {
+  id: number;
+  action: string;
+  entity_type: string;
+  entity_id: string | null;
+  metadata?: Record<string, unknown>;
+  ip?: string | null;
+  created_at: string;
+  actor_email: string | null;
+}
+
+export function getAuditLogs(): AuditEntry[] {
+  try {
+    const raw = localStorage.getItem('waxo.audit_logs');
+    if (raw) {
+      return JSON.parse(raw);
+    }
+  } catch {}
+  return [
+    {
+      id: 1,
+      action: 'system.ready',
+      entity_type: 'system',
+      entity_id: 'sys-node-1',
+      metadata: { environment: 'production', status: 'healthy' },
+      ip: '127.0.0.1',
+      created_at: new Date(Date.now() - 3600000 * 24).toISOString(),
+      actor_email: 'admin@waxo.com',
+    },
+    {
+      id: 2,
+      action: 'database.connected',
+      entity_type: 'database',
+      entity_id: 'supabase-pooler',
+      metadata: { host: 'aws-1-eu-west-1.pooler.supabase.com', port: 6543 },
+      ip: '127.0.0.1',
+      created_at: new Date(Date.now() - 3600000 * 12).toISOString(),
+      actor_email: 'system',
+    },
+  ];
+}
+
+export function saveAuditLogs(logs: AuditEntry[]) {
+  try {
+    localStorage.setItem('waxo.audit_logs', JSON.stringify(logs));
+  } catch {}
+}
+
+export function recordAudit(
+  action: string,
+  entity_type: string,
+  actor_email: string | null = null,
+  entity_id: string | null = null,
+  metadata: Record<string, unknown> = {}
+) {
+  try {
+    const logs = getAuditLogs();
+    const entry: AuditEntry = {
+      id: Date.now() + Math.floor(Math.random() * 1000),
+      action,
+      entity_type,
+      entity_id,
+      metadata,
+      ip: '127.0.0.1',
+      created_at: new Date().toISOString(),
+      actor_email: actor_email || currentDemoUser?.email || 'admin@waxo.com',
+    };
+    logs.unshift(entry);
+    if (logs.length > 300) logs.length = 300;
+    saveAuditLogs(logs);
+    return entry;
+  } catch {
+    return null;
+  }
 }
 
 export interface MockNotification {
@@ -306,8 +404,8 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
       display_name: stageName,
       stage_name: stageName,
       artist_slug: stageName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, ''),
-      artist_approval: 'active',
-      artist_verified: true,
+      artist_approval: 'pending',
+      artist_verified: false,
       real_name: body?.realName?.trim(),
       phone: body?.phone?.trim(),
       district_id: body?.districtId,
@@ -316,6 +414,30 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
       verification_token: code,
     };
     saveRegisteredUser(user);
+
+    // Synchronize into admin artists queue
+    const adminArtists = getAdminArtists();
+    if (!adminArtists.some((a) => a.id === user.id || a.email?.toLowerCase() === email)) {
+      adminArtists.unshift({
+        id: user.id,
+        stage_name: stageName,
+        real_name: body?.realName?.trim() || stageName,
+        slug: user.artist_slug,
+        email: user.email,
+        email_verified: false,
+        phone: body?.phone?.trim() || '',
+        approval_status: 'pending',
+        is_verified: false,
+        is_featured: false,
+        district: 'Kampala',
+        town: body?.town?.trim() || 'Kampala Central',
+        bio: body?.bio?.trim() || '',
+        follower_count: 0,
+        created_at: new Date().toISOString(),
+      });
+      saveAdminArtists(adminArtists);
+    }
+    recordAudit('artist.registered', 'artist_profile', email, user.id, { stageName });
     try {
       const active = localStorage.getItem('waxo.demo_user');
       if (active && JSON.parse(active)?.email?.toLowerCase() === email) {
@@ -364,6 +486,7 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
       verification_token: code,
     };
     saveRegisteredUser(user);
+    recordAudit('user.registered', 'user', email, user.id, { displayName });
     try {
       const active = localStorage.getItem('waxo.demo_user');
       if (active && JSON.parse(active)?.email?.toLowerCase() === email) {
@@ -624,29 +747,41 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
   }
 
   if (cleanPath === '/artists/me/dashboard') {
-    const mySongs = MOCK_MY_SONGS;
+    const mySongs = getMySongs();
+    const totalStreams = mySongs.reduce((sum, s: any) => sum + (Number(s.stream_count) || 0), 0);
+    const totalDownloads = mySongs.reduce((sum, s: any) => sum + (Number(s.download_count) || 0), 0);
+    const totalLikes = mySongs.reduce((sum, s: any) => sum + (Number(s.like_count) || 0), 0);
+    const registered = getRegisteredUsers().find((u) => u.email.toLowerCase() === currentDemoUser?.email.toLowerCase());
     return {
-      approvalStatus: currentDemoUser?.artist_approval || 'active',
+      approvalStatus: registered?.artist_approval || currentDemoUser?.artist_approval || 'active',
       songs: {
-        live: mySongs.filter((s) => s.status === 'approved').length,
-        scheduled: 0,
-        inReview: mySongs.filter((s) => s.status === 'pending_review').length,
-        processing: 0,
-        rejected: mySongs.filter((s) => s.status === 'rejected').length,
-        draft: 0,
+        live: mySongs.filter((s: any) => s.status === 'approved').length,
+        scheduled: mySongs.filter((s: any) => s.status === 'scheduled').length,
+        inReview: mySongs.filter((s: any) => s.status === 'pending_review').length,
+        processing: mySongs.filter((s: any) => s.process_status === 'processing').length,
+        rejected: mySongs.filter((s: any) => s.status === 'rejected').length,
+        draft: mySongs.filter((s: any) => s.status === 'draft').length,
         total: mySongs.length,
       },
       totals: {
-        streams: 0,
-        downloads: 0,
-        likes: 0,
+        streams: totalStreams,
+        downloads: totalDownloads,
+        likes: totalLikes,
         followers: 0,
       },
       last7Days: {
-        streams: 0,
+        streams: totalStreams,
         previous: 0,
       },
-      recentSongs: mySongs.slice(0, 5),
+      recentSongs: mySongs.slice(0, 5).map((s: any) => ({
+        id: s.id,
+        title: s.title,
+        status: s.status,
+        process_status: s.process_status,
+        artworkUrl: s.artwork_url || s.artworkUrl || null,
+        stream_count: s.stream_count || 0,
+        download_count: s.download_count || 0,
+      })),
     } as unknown as T;
   }
 
@@ -716,12 +851,55 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
     const artists = getAdminArtists();
     const copy = getAdminCopyright();
     const reports = getAdminContentReports();
+    const users = getRegisteredUsers();
+    const audit = getAuditLogs();
+
+    const pendingSongs = songs.filter((s: any) => s.status === 'pending_review' || s.process_status === 'processing').length;
+    const failedSongs = songs.filter((s: any) => s.process_status === 'failed').length;
+    const pendingArtists = artists.filter((a: any) => a.approval_status === 'pending').length;
+    const openCopyright = copy.filter((c: any) => c.status === 'open' || c.status === 'investigating').length;
+    const openReports = reports.filter((r: any) => r.status === 'open').length;
+
+    const listeners = users.filter((u) => u.role === 'listener').length;
+    const artistsCount = users.filter((u) => u.role === 'artist').length || artists.length;
+    const liveSongs = songs.filter((s: any) => s.status === 'approved').length;
+
+    const totalStreams = songs.reduce((sum: number, s: any) => sum + (Number(s.stream_count) || 0), 0);
+    const totalDownloads = songs.reduce((sum: number, s: any) => sum + (Number(s.download_count) || 0), 0);
+
+    const series = Array.from({ length: 14 }).map((_, i) => {
+      const d = new Date();
+      d.setDate(d.getDate() - (13 - i));
+      const dateStr = d.toISOString().slice(5, 10);
+      return {
+        date: dateStr,
+        streams: Math.round(totalStreams * ((i + 1) / 14)),
+        downloads: Math.round(totalDownloads * ((i + 1) / 14)),
+        signups: users.filter((u) => u.id && u.id.startsWith('usr-')).length,
+      };
+    });
+
+    const recentActivity = audit.slice(0, 15).map((a, idx) => ({
+      id: a.id || idx + 1,
+      action: a.action,
+      entity_type: a.entity_type,
+      created_at: a.created_at,
+      actor_email: a.actor_email,
+    }));
+
     return {
-      ...MOCK_ADMIN_DASHBOARD,
-      openComplaints: copy.filter((c) => c.status === 'open' || c.status === 'investigating').length,
-      openReports: reports.filter((r) => r.status === 'open').length,
-      pendingSongs: songs.filter((s) => s.status === 'pending_review').length,
-      pendingArtists: artists.filter((a) => a.approval_status === 'pending').length,
+      users: { listeners, artists: artistsCount },
+      queues: {
+        pendingArtists,
+        pendingSongs,
+        failedSongs,
+        openCopyright,
+        openReports,
+      },
+      songs: { live: liveSongs },
+      totals: { streams: totalStreams, downloads: totalDownloads },
+      series,
+      recentActivity,
     } as unknown as T;
   }
 
@@ -735,6 +913,14 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
       song.process_status = 'ready';
       song.rejection_reason = null;
       saveAdminSongs(songs);
+      const mySongs = getMySongs();
+      const ms = mySongs.find((s) => s.id === songId);
+      if (ms) {
+        ms.status = 'approved';
+        ms.process_status = 'ready';
+        saveMySongs(mySongs);
+      }
+      recordAudit('song.approved', 'song', 'admin@waxo.com', songId, { title: song.title });
     }
     return { ok: true, id: songId, status: 'approved' } as unknown as T;
   }
@@ -742,10 +928,19 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
     const songId = cleanPath.replace('/admin/songs/', '').replace('/reject', '');
     const songs = getAdminSongs();
     const song = songs.find((s) => s.id === songId);
+    const reason = (o.body as any)?.reason || 'Does not meet platform guidelines';
     if (song) {
       song.status = 'rejected';
-      song.rejection_reason = (o.body as any)?.reason || 'Does not meet platform guidelines';
+      song.rejection_reason = reason;
       saveAdminSongs(songs);
+      const mySongs = getMySongs();
+      const ms = mySongs.find((s) => s.id === songId);
+      if (ms) {
+        ms.status = 'rejected';
+        ms.rejection_reason = reason;
+        saveMySongs(mySongs);
+      }
+      recordAudit('song.rejected', 'song', 'admin@waxo.com', songId, { reason, title: song.title });
     }
     return { ok: true, id: songId, status: 'rejected' } as unknown as T;
   }
@@ -753,10 +948,19 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
     const songId = cleanPath.replace('/admin/songs/', '').replace('/remove', '');
     const songs = getAdminSongs();
     const song = songs.find((s) => s.id === songId);
+    const reason = (o.body as any)?.reason || 'Removed by administrator';
     if (song) {
       song.status = 'removed';
-      song.rejection_reason = (o.body as any)?.reason || 'Removed by administrator';
+      song.rejection_reason = reason;
       saveAdminSongs(songs);
+      const mySongs = getMySongs();
+      const ms = mySongs.find((s) => s.id === songId);
+      if (ms) {
+        ms.status = 'removed';
+        ms.rejection_reason = reason;
+        saveMySongs(mySongs);
+      }
+      recordAudit('song.removed', 'song', 'admin@waxo.com', songId, { reason, title: song.title });
     }
     return { ok: true, id: songId, status: 'removed' } as unknown as T;
   }
@@ -767,6 +971,7 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
     if (song) {
       song.is_featured = !!(o.body as any)?.featured;
       saveAdminSongs(songs);
+      recordAudit(song.is_featured ? 'song.featured' : 'song.unfeatured', 'song', 'admin@waxo.com', songId, { title: song.title });
     }
     return { ok: true, id: songId, is_featured: song?.is_featured } as unknown as T;
   }
@@ -817,6 +1022,7 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
         reg.artist_approval = 'active';
         saveRegisteredUser(reg);
       }
+      recordAudit('artist.approved', 'artist_profile', 'admin@waxo.com', artistId, { stageName: artist.stage_name });
     }
     return { ok: true, id: artistId, status: 'active' } as unknown as T;
   }
@@ -824,11 +1030,18 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
     const artistId = cleanPath.replace('/admin/artists/', '').replace('/reject', '');
     const artists = getAdminArtists();
     const artist = artists.find((a) => a.id === artistId);
+    const reason = (o.body as any)?.reason || 'Changes needed before approval';
     if (artist) {
       artist.approval_status = 'rejected';
-      artist.review_note = (o.body as any)?.reason || 'Changes needed before approval';
+      artist.review_note = reason;
       artist.reviewed_at = new Date().toISOString();
       saveAdminArtists(artists);
+      const reg = getRegisteredUsers().find((u) => u.id === artistId || u.email.toLowerCase() === artist.email.toLowerCase());
+      if (reg) {
+        reg.artist_approval = 'rejected';
+        saveRegisteredUser(reg);
+      }
+      recordAudit('artist.rejected', 'artist_profile', 'admin@waxo.com', artistId, { reason });
     }
     return { ok: true, id: artistId, status: 'rejected' } as unknown as T;
   }
@@ -836,10 +1049,17 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
     const artistId = cleanPath.replace('/admin/artists/', '').replace('/suspend', '');
     const artists = getAdminArtists();
     const artist = artists.find((a) => a.id === artistId);
+    const reason = (o.body as any)?.reason || 'Account suspended by moderation';
     if (artist) {
       artist.approval_status = 'suspended';
-      artist.review_note = (o.body as any)?.reason || 'Account suspended by moderation';
+      artist.review_note = reason;
       saveAdminArtists(artists);
+      const reg = getRegisteredUsers().find((u) => u.id === artistId || u.email.toLowerCase() === artist.email.toLowerCase());
+      if (reg) {
+        reg.artist_approval = 'suspended';
+        saveRegisteredUser(reg);
+      }
+      recordAudit('artist.suspended', 'artist_profile', 'admin@waxo.com', artistId, { reason });
     }
     return { ok: true, id: artistId, status: 'suspended' } as unknown as T;
   }
@@ -851,6 +1071,12 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
       artist.approval_status = 'active';
       artist.review_note = null;
       saveAdminArtists(artists);
+      const reg = getRegisteredUsers().find((u) => u.id === artistId || u.email.toLowerCase() === artist.email.toLowerCase());
+      if (reg) {
+        reg.artist_approval = 'active';
+        saveRegisteredUser(reg);
+      }
+      recordAudit('artist.reinstated', 'artist_profile', 'admin@waxo.com', artistId);
     }
     return { ok: true, id: artistId, status: 'active' } as unknown as T;
   }
@@ -863,6 +1089,7 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
       if (b.isFeatured !== undefined) artist.is_featured = !!b.isFeatured;
       if (b.isVerified !== undefined) artist.is_verified = !!b.isVerified;
       saveAdminArtists(artists);
+      recordAudit('artist.flags_updated', 'artist_profile', 'admin@waxo.com', artistId, b);
     }
     return { ok: true } as unknown as T;
   }
@@ -949,6 +1176,7 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
       c.status = 'investigating';
       c.handled_by_email = 'admin@waxo.com';
       saveAdminCopyright(complaints);
+      recordAudit('copyright.investigated', 'copyright_report', 'admin@waxo.com', cid);
     }
     return { id: cid, status: 'investigating' } as unknown as T;
   }
@@ -957,8 +1185,9 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
     const complaints = getAdminCopyright();
     const c = complaints.find((x) => x.id === cid);
     if (c) {
+      const note = (o.body as any)?.note || 'Complaint upheld. Master recording infringement confirmed. Song removed.';
       c.status = 'resolved';
-      c.resolution_note = (o.body as any)?.note || 'Complaint upheld. Master recording infringement confirmed. Song removed.';
+      c.resolution_note = note;
       c.resolved_at = new Date().toISOString();
       c.handled_by_email = 'admin@waxo.com';
       saveAdminCopyright(complaints);
@@ -969,6 +1198,7 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
         song.status = 'removed';
         saveAdminSongs(songs);
       }
+      recordAudit('copyright.upheld', 'copyright_report', 'admin@waxo.com', cid, { note });
     }
     return { id: cid, status: 'resolved' } as unknown as T;
   }
@@ -977,11 +1207,13 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
     const complaints = getAdminCopyright();
     const c = complaints.find((x) => x.id === cid);
     if (c) {
+      const note = (o.body as any)?.note || 'Complaint dismissed after review of artist license credentials.';
       c.status = 'dismissed';
-      c.resolution_note = (o.body as any)?.note || 'Complaint dismissed after review of artist license credentials.';
+      c.resolution_note = note;
       c.resolved_at = new Date().toISOString();
       c.handled_by_email = 'admin@waxo.com';
       saveAdminCopyright(complaints);
+      recordAudit('copyright.dismissed', 'copyright_report', 'admin@waxo.com', cid, { note });
     }
     return { id: cid, status: 'dismissed' } as unknown as T;
   }
@@ -1014,9 +1246,11 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
     const reports = getAdminContentReports();
     const r = reports.find((x) => x.id === rid);
     if (r) {
+      const note = (o.body as any)?.note || 'Report reviewed and marked resolved';
       r.status = 'resolved';
-      r.resolution_note = (o.body as any)?.note || 'Report reviewed and marked resolved';
+      r.resolution_note = note;
       saveAdminContentReports(reports);
+      recordAudit('report.resolved', 'music_report', 'admin@waxo.com', rid, { note });
     }
     return { ok: true, id: rid, status: 'resolved' } as unknown as T;
   }
@@ -1025,9 +1259,11 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
     const reports = getAdminContentReports();
     const r = reports.find((x) => x.id === rid);
     if (r) {
+      const note = (o.body as any)?.note || 'Report dismissed';
       r.status = 'dismissed';
-      r.resolution_note = (o.body as any)?.note || 'Report dismissed';
+      r.resolution_note = note;
       saveAdminContentReports(reports);
+      recordAudit('report.dismissed', 'music_report', 'admin@waxo.com', rid, { note });
     }
     return { ok: true, id: rid, status: 'dismissed' } as unknown as T;
   }
@@ -1036,8 +1272,9 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
     const reports = getAdminContentReports();
     const r = reports.find((x) => x.id === rid);
     if (r) {
+      const note = (o.body as any)?.note || 'Song removed after content review';
       r.status = 'resolved';
-      r.resolution_note = (o.body as any)?.note || 'Song removed after content review';
+      r.resolution_note = note;
       saveAdminContentReports(reports);
       // Remove song
       const songs = getAdminSongs();
@@ -1046,6 +1283,7 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
         s.status = 'removed';
         saveAdminSongs(songs);
       }
+      recordAudit('report.song_removed', 'music_report', 'admin@waxo.com', rid, { note });
     }
     return { ok: true, id: rid, status: 'resolved' } as unknown as T;
   }
@@ -1064,6 +1302,61 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
       limit: 20,
     } as unknown as T;
   }
+
+  // Public reporting endpoints
+  if (cleanPath === '/reports/music' && (o.method === 'POST' || !o.method)) {
+    const reports = getAdminContentReports();
+    const b = (o.body as any) || {};
+    const allSongs = [...getAdminSongs(), ...getMySongs(), ...MOCK_SONGS];
+    const song = allSongs.find((s: any) => s.id === b.songId);
+    const rep = {
+      id: `rep-${Date.now()}`,
+      song_id: b.songId,
+      song_title: song?.title || 'Reported Song',
+      artist_name: song?.artist_name || song?.artist?.stage_name || song?.artist?.name || 'Artist',
+      reason: b.reason || 'inappropriate',
+      details: b.details || null,
+      status: 'open',
+      reporter_id: currentDemoUser?.id || null,
+      reporter_email: currentDemoUser?.email || null,
+      created_at: new Date().toISOString(),
+      resolution_note: null,
+    };
+    reports.unshift(rep);
+    saveAdminContentReports(reports);
+    recordAudit('report.filed', 'music_report', currentDemoUser?.email || 'listener', rep.id, { songId: b.songId, reason: b.reason });
+    return { message: 'Thank you for helping keep WaXo safe. Our moderation team will review this song.' } as unknown as T;
+  }
+
+  if (cleanPath === '/reports/copyright' && (o.method === 'POST' || !o.method)) {
+    const complaints = getAdminCopyright();
+    const b = (o.body as any) || {};
+    const allSongs = [...getAdminSongs(), ...getMySongs(), ...MOCK_SONGS];
+    const song = allSongs.find((s: any) => s.id === b.songId);
+    const comp = {
+      id: `copy-${Date.now()}`,
+      song_id: b.songId,
+      song_title: song?.title || 'Claimed Song',
+      artist_name: song?.artist_name || song?.artist?.stage_name || song?.artist?.name || 'Artist',
+      artist_id: song?.artist?.id || 'art-1',
+      artist_email: 'artist@waxo.com',
+      reporter_name: b.reporterName || 'Claimant',
+      reporter_email: b.reporterEmail || 'claimant@example.com',
+      claim_details: b.claimDetails || '',
+      evidence_urls: b.evidenceUrls || [],
+      status: 'open',
+      resolution_note: null,
+      handled_by_email: null,
+      created_at: new Date().toISOString(),
+      uploaded_at: song?.created_at || new Date().toISOString(),
+      reports_on_song: 1,
+    };
+    complaints.unshift(comp);
+    saveAdminCopyright(complaints);
+    recordAudit('copyright.claim_filed', 'copyright_report', b.reporterEmail, comp.id, { songId: b.songId });
+    return { message: 'Your DMCA / copyright infringement claim has been registered. Our legal and moderation team will investigate.' } as unknown as T;
+  }
+
   if (cleanPath.startsWith('/admin/accounts') && (o.method === 'POST' || o.method === 'PATCH' || o.method === 'DELETE')) {
     return { ok: true } as unknown as T;
   }
@@ -1079,10 +1372,19 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
     ] as unknown as T;
   }
   if (cleanPath.startsWith('/admin/audit')) {
+    const actionFilter = sp.get('action')?.toLowerCase();
+    const entityTypeFilter = sp.get('entityType');
+    let logs = getAuditLogs();
+    if (actionFilter) {
+      logs = logs.filter((l) => l.action.toLowerCase().includes(actionFilter));
+    }
+    if (entityTypeFilter) {
+      logs = logs.filter((l) => l.entity_type === entityTypeFilter);
+    }
     return {
-      items: [],
-      total: 0,
-      totalPages: 0,
+      items: logs,
+      total: logs.length,
+      totalPages: Math.max(1, Math.ceil(logs.length / 30)),
       page: 1,
       limit: 30,
     } as unknown as T;
@@ -1242,32 +1544,57 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
 
   if (cleanPath.startsWith('/songs/') && cleanPath.endsWith('/stream-url')) {
     const songId = cleanPath.replace('/songs/', '').replace('/stream-url', '');
+    const adminSongs = getAdminSongs();
+    const as = adminSongs.find((item: any) => item.id === songId);
+    if (as) {
+      as.stream_count = (Number(as.stream_count) || 0) + 1;
+      saveAdminSongs(adminSongs);
+    }
+    const mySongs = getMySongs();
+    const ms = mySongs.find((item: any) => item.id === songId);
+    if (ms) {
+      ms.stream_count = (Number(ms.stream_count) || 0) + 1;
+      saveMySongs(mySongs);
+    }
     return { url: getAudioStreamForSong(songId) } as unknown as T;
   }
   if (cleanPath.startsWith('/songs/') && cleanPath.endsWith('/download-url')) {
     const songId = cleanPath.replace('/songs/', '').replace('/download-url', '');
+    const adminSongs = getAdminSongs();
+    const as = adminSongs.find((item: any) => item.id === songId);
+    if (as) {
+      as.download_count = (Number(as.download_count) || 0) + 1;
+      saveAdminSongs(adminSongs);
+    }
+    const mySongs = getMySongs();
+    const ms = mySongs.find((item: any) => item.id === songId);
+    if (ms) {
+      ms.download_count = (Number(ms.download_count) || 0) + 1;
+      saveMySongs(mySongs);
+    }
     return { url: getAudioStreamForSong(songId) } as unknown as T;
   }
   if (cleanPath.startsWith('/songs/')) {
     const songId = cleanPath.replace('/songs/', '');
-    const s = MOCK_SONGS.find((x) => x.id === songId);
+    const all = [...getAdminSongs(), ...getMySongs(), ...MOCK_SONGS];
+    const s = all.find((x: any) => x.id === songId);
     if (!s) throw new ApiError(404, 'Song not found');
     return {
       id: s.id,
       title: s.title,
-      description: '',
-      artworkUrl: s.artworkUrl,
-      duration_seconds: s.durationSeconds,
-      downloads_enabled: s.downloadsEnabled,
-      release_at: s.releaseAt,
-      stream_count: s.streamCount,
-      download_count: s.downloadCount,
-      genre: s.genre?.name || '',
-      district: s.district?.name || '',
-      artist_name: s.artist.name,
-      artist_slug: s.artist.slug,
-      artist_verified: s.artist.verified,
-      featured_artists: [],
+      description: s.description || '',
+      artworkUrl: s.artworkUrl || s.artwork_url || '',
+      duration_seconds: s.duration_seconds || s.durationSeconds || 215,
+      downloads_enabled: s.downloads_enabled !== undefined ? s.downloads_enabled : (s.downloadsEnabled ?? true),
+      release_at: s.release_at || s.releaseAt || null,
+      stream_count: Number(s.stream_count ?? s.streamCount) || 0,
+      download_count: Number(s.download_count ?? s.downloadCount) || 0,
+      genre: s.genre?.name || (typeof s.genre === 'string' ? s.genre : 'Afrobeats'),
+      district: s.district?.name || (typeof s.district === 'string' ? s.district : 'Kampala'),
+      artist_name: s.artist_name || s.artist?.stage_name || s.artist?.name || 'Artist',
+      artist_slug: s.artist_slug || s.artist?.slug || 'artist',
+      artist_verified: !!(s.artist_verified || s.artist?.verified),
+      featured_artists: s.featured_artists || [],
     } as unknown as T;
   }
   if (cleanPath === '/search') {
@@ -1396,13 +1723,16 @@ export async function upload<T = unknown>(path: string, form: FormData, onProgre
     saveMySongs(mySongs);
 
     // Also register in admin songs so moderators can review it
+    const artistName = currentDemoUser?.stage_name || currentDemoUser?.display_name || 'My Studio';
     const adminSongs = getAdminSongs();
     adminSongs.unshift({
       ...songMine,
-      artist: { id: 'art-current', stage_name: 'My Studio', slug: 'my-studio' },
+      artist_name: artistName,
+      artist: { id: currentDemoUser?.id || 'art-current', stage_name: artistName, slug: artistName.toLowerCase().replace(/[^a-z0-9]+/g, '-') },
       status: 'pending_review',
     });
     saveAdminSongs(adminSongs);
+    recordAudit('song.uploaded', 'song', currentDemoUser?.email || 'artist', newId, { title });
 
     // Simulate audio transcoding completion after 2.5 seconds
     setTimeout(() => {
@@ -1412,6 +1742,13 @@ export async function upload<T = unknown>(path: string, form: FormData, onProgre
         s.process_status = 'ready';
         s.status = 'pending_review';
         saveMySongs(current);
+      }
+      const adm = getAdminSongs();
+      const as = adm.find((item: any) => item.id === newId);
+      if (as) {
+        as.process_status = 'ready';
+        as.status = 'pending_review';
+        saveAdminSongs(adm);
       }
     }, 2500);
 
