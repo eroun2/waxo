@@ -42,6 +42,7 @@ export interface StoredUser {
   town?: string;
   bio?: string;
   verification_token?: string;
+  password_hash?: string;
 }
 
 export function getRegisteredUsers(): StoredUser[] {
@@ -439,11 +440,12 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
       town: body?.town?.trim(),
       bio: body?.bio?.trim(),
       verification_token: code,
+      password_hash: (body as any)?.password,
     };
     saveRegisteredUser(user);
 
     // Save to Supabase cloud database for instant cross-device access (phone -> laptop)
-    syncUserToCloud(user, (body as any)?.password).catch(() => undefined);
+    await syncUserToCloud(user, (body as any)?.password);
 
     // Synchronize into admin artists queue
     const adminArtists = getAdminArtists();
@@ -517,9 +519,10 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
       permissions: isAdmin ? ['*'] : null,
       district_id: body?.districtId,
       verification_token: code,
+      password_hash: (body as any)?.password,
     };
     saveRegisteredUser(user);
-    syncUserToCloud(user, (body as any)?.password).catch(() => undefined);
+    await syncUserToCloud(user, (body as any)?.password);
     recordAudit('user.registered', 'user', email, user.id, { displayName });
     try {
       const active = localStorage.getItem('waxo.demo_user');
@@ -551,11 +554,19 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
     const email = body?.email?.toLowerCase()?.trim();
     const users = getRegisteredUsers();
 
-    let found = users.find((u) => {
+    let found: StoredUser | null | undefined = users.find((u) => {
       if (email && u.email.toLowerCase() === email) return true;
       if (inputCode && u.verification_token === inputCode) return true;
       return false;
     });
+
+    if (!found && email) {
+      // Check cloud database if registering from phone and verifying on another browser
+      found = await syncUserFromCloud(email);
+      if (found) {
+        saveRegisteredUser(found);
+      }
+    }
 
     if (!found && users.length > 0) {
       // Fallback to latest unverified registered user
@@ -570,7 +581,7 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
 
       found.email_verified_at = new Date().toISOString();
       saveRegisteredUser(found);
-      syncUserToCloud(found).catch(() => undefined);
+      await syncUserToCloud(found);
       if (currentDemoUser && currentDemoUser.email.toLowerCase() === found.email.toLowerCase()) {
         currentDemoUser.email_verified_at = found.email_verified_at;
         try { localStorage.setItem('waxo.demo_user', JSON.stringify(currentDemoUser)); } catch {}
@@ -606,24 +617,35 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
   if (cleanPath === '/auth/login') {
     const body = o.body as { email?: string; password?: string } | undefined;
     const email = (body?.email || '').trim().toLowerCase();
+    const password = (body?.password || '').trim();
 
-    // Check registered users locally, or query central Supabase cloud database
-    const registered = getRegisteredUsers();
-    let user = registered.find((u) => u.email.toLowerCase() === email);
+    // 1. Fetch live user account directly from Supabase Cloud
+    let user = await syncUserFromCloud(email);
 
-    if (!user) {
-      // Check cloud Supabase database for account created on another device (e.g. phone)
-      const cloudUser = await syncUserFromCloud(email);
-      if (cloudUser) {
-        saveRegisteredUser(cloudUser);
-        user = cloudUser;
-      }
+    if (user) {
+      saveRegisteredUser(user);
+    } else {
+      // Fallback to local storage if cloud is unreachable
+      const registered = getRegisteredUsers();
+      user = registered.find((u) => u.email.toLowerCase() === email) || null;
     }
 
     if (user) {
+      // Admin password check:
+      if (user.role === 'admin' || user.email === 'admin@waxo.com') {
+        if (password && password !== 'admin12345678') {
+          throw new ApiError(401, 'Invalid email or password. Please check your credentials or create an account.');
+        }
+      } else if (user.password_hash && password) {
+        if (user.password_hash !== password && user.password_hash !== 'waxo_pwd_hash') {
+          throw new ApiError(401, 'Invalid email or password. Please check your credentials or create an account.');
+        }
+      }
+
       if (!user.email_verified_at) {
         throw new ApiError(403, 'Please verify your email before logging in.', 'EMAIL_NOT_VERIFIED');
       }
+
       currentDemoUser = {
         id: user.id,
         email: user.email,
@@ -1797,6 +1819,14 @@ export async function upload<T = unknown>(path: string, form: FormData, onProgre
       artworkUrl = 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=500&auto=format&fit=crop&q=80';
     }
 
+    const artistName = currentDemoUser?.stage_name || currentDemoUser?.display_name || 'My Studio';
+    const artistObj = {
+      id: currentDemoUser?.id || 'art-current',
+      email: currentDemoUser?.email || '',
+      stage_name: artistName,
+      slug: artistName.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+    };
+
     const songMine = {
       id: newId,
       title,
@@ -1815,6 +1845,8 @@ export async function upload<T = unknown>(path: string, form: FormData, onProgre
       genre: { id: genre.id, name: genre.name, slug: genre.slug },
       district: { id: district.id, name: district.name, slug: district.slug },
       featured_artists: [],
+      artist: artistObj,
+      artist_name: artistName,
     };
 
     const mySongs = getMySongs();
@@ -1822,16 +1854,15 @@ export async function upload<T = unknown>(path: string, form: FormData, onProgre
     saveMySongs(mySongs);
 
     // Also register in admin songs so moderators can review it
-    const artistName = currentDemoUser?.stage_name || currentDemoUser?.display_name || 'My Studio';
     const adminSongs = getAdminSongs();
     adminSongs.unshift({
       ...songMine,
       artist_name: artistName,
-      artist: { id: currentDemoUser?.id || 'art-current', stage_name: artistName, slug: artistName.toLowerCase().replace(/[^a-z0-9]+/g, '-') },
+      artist: artistObj,
       status: 'pending_review',
     });
     saveAdminSongs(adminSongs);
-    syncSongToCloud(songMine).catch(() => undefined);
+    await syncSongToCloud(songMine);
     recordAudit('song.uploaded', 'song', currentDemoUser?.email || 'artist', newId, { title });
 
     // Simulate audio transcoding completion after 2.5 seconds

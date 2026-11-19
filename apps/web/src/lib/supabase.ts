@@ -50,6 +50,7 @@ export async function syncUserToCloud(user: StoredUser, rawPassword?: string): P
     const existing = await supabaseRest<any[]>(`users?email=eq.${encodeURIComponent(email)}&select=id`);
 
     let userId = existing?.[0]?.id;
+    const pwd = rawPassword || user.password_hash || 'waxo_pwd_hash';
 
     if (!userId) {
       // Create user row
@@ -58,7 +59,7 @@ export async function syncUserToCloud(user: StoredUser, rawPassword?: string): P
         headers: { Prefer: 'return=representation' },
         body: JSON.stringify({
           email,
-          password_hash: rawPassword || 'waxo_pwd_hash',
+          password_hash: pwd,
           role: user.role,
           plan: user.plan || 'free',
           status: 'active',
@@ -67,13 +68,17 @@ export async function syncUserToCloud(user: StoredUser, rawPassword?: string): P
       });
       userId = inserted?.[0]?.id;
     } else {
-      // Update verified status if applicable
+      // Update verified status and password if provided
+      const patchData: any = {
+        email_verified_at: user.email_verified_at || null,
+        role: user.role,
+      };
+      if (rawPassword || user.password_hash) {
+        patchData.password_hash = rawPassword || user.password_hash;
+      }
       await supabaseRest(`users?id=eq.${userId}`, {
         method: 'PATCH',
-        body: JSON.stringify({
-          email_verified_at: user.email_verified_at || null,
-          role: user.role,
-        }),
+        body: JSON.stringify(patchData),
       });
     }
 
@@ -82,13 +87,14 @@ export async function syncUserToCloud(user: StoredUser, rawPassword?: string): P
     // Attach profile according to role
     if (user.role === 'listener') {
       const listenerExists = await supabaseRest<any[]>(`listener_profiles?user_id=eq.${userId}&select=user_id`);
+      const districtId = Number(user.district_id) || 8;
       if (!listenerExists || listenerExists.length === 0) {
         await supabaseRest('listener_profiles', {
           method: 'POST',
           body: JSON.stringify({
             user_id: userId,
             display_name: user.display_name || email.split('@')[0],
-            district_id: user.district_id || 8, // 8 = Kampala
+            district_id: districtId, // 8 = Kampala
           }),
         });
       } else {
@@ -103,6 +109,7 @@ export async function syncUserToCloud(user: StoredUser, rawPassword?: string): P
       const artistExists = await supabaseRest<any[]>(`artist_profiles?user_id=eq.${userId}&select=id`);
       const stageName = user.stage_name || user.display_name || 'Artist';
       const slug = user.artist_slug || stageName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+      const districtId = Number(user.district_id) || 8;
 
       if (!artistExists || artistExists.length === 0) {
         await supabaseRest('artist_profiles', {
@@ -113,7 +120,7 @@ export async function syncUserToCloud(user: StoredUser, rawPassword?: string): P
             slug,
             real_name: user.real_name || stageName,
             phone: user.phone || '',
-            district_id: user.district_id || 8,
+            district_id: districtId,
             town: user.town || 'Kampala Central',
             bio: user.bio || '',
             approval_status: user.artist_approval || 'pending',
@@ -173,6 +180,7 @@ export async function syncUserFromCloud(email: string): Promise<StoredUser | nul
       district_id: artist?.district_id || listener?.district_id || 8,
       town: artist?.town,
       bio: artist?.bio,
+      password_hash: r.password_hash,
     };
 
     return stored;
@@ -216,6 +224,7 @@ export async function syncAllUsersFromCloud(): Promise<StoredUser[]> {
         district_id: artist?.district_id || listener?.district_id || 8,
         town: artist?.town,
         bio: artist?.bio,
+        password_hash: r.password_hash,
       };
     });
   } catch (err) {
@@ -232,17 +241,35 @@ export async function syncSongToCloud(song: any): Promise<boolean> {
   try {
     // 1. Ensure artist profile exists in Supabase
     let artistId = song.artist?.id;
-    const artistRows = await supabaseRest<any[]>(`artist_profiles?id=eq.${artistId}&select=id`);
+    let artistRows: any[] | null = null;
+
+    if (artistId) {
+      artistRows = await supabaseRest<any[]>(`artist_profiles?id=eq.${artistId}&select=id`);
+    }
 
     if (!artistRows || artistRows.length === 0) {
-      // Find default or fallback artist profile
+      // Try resolving by artist email or stage name
+      const email = song.artist?.email;
+      if (email) {
+        const u = await supabaseRest<any[]>(`users?email=eq.${encodeURIComponent(email)}&select=id,artist_profile:artist_profiles!artist_profiles_user_id_fkey(id)`);
+        if (u && u[0]?.artist_profile?.[0]?.id) {
+          artistId = u[0].artist_profile[0].id;
+        }
+      }
+    }
+
+    if (!artistId) {
+      // Fallback to first registered artist in database
       const firstArtist = await supabaseRest<any[]>('artist_profiles?select=id&limit=1');
       if (firstArtist && firstArtist.length > 0) {
         artistId = firstArtist[0].id;
       }
     }
 
-    if (!artistId) return false;
+    if (!artistId) {
+      console.warn('[Supabase] No artist profile found to associate song with.');
+      return false;
+    }
 
     await supabaseRest('songs', {
       method: 'POST',
@@ -252,8 +279,8 @@ export async function syncSongToCloud(song: any): Promise<boolean> {
         title: song.title,
         slug: song.slug || song.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, ''),
         description: song.description || null,
-        genre_id: song.genre?.id || 1,
-        district_id: song.district?.id || 8,
+        genre_id: Number(song.genre?.id) || 1,
+        district_id: Number(song.district?.id) || 8,
         artwork_key: song.artwork_url || null,
         master_key: 'uploads/' + song.id + '.mp3',
         duration_seconds: song.duration_seconds || 215,
