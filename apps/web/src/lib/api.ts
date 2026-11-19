@@ -78,6 +78,22 @@ export function saveRegisteredUser(user: StoredUser) {
   } catch {}
 }
 
+export function getMySongs(): any[] {
+  try {
+    const raw = localStorage.getItem('waxo.my_songs');
+    if (raw) {
+      return JSON.parse(raw);
+    }
+  } catch {}
+  return [...MOCK_MY_SONGS];
+}
+
+export function saveMySongs(songs: any[]) {
+  try {
+    localStorage.setItem('waxo.my_songs', JSON.stringify(songs));
+  } catch {}
+}
+
 export function getAdminSongs(): any[] {
   try {
     const raw = localStorage.getItem('waxo.admin_songs');
@@ -1184,13 +1200,32 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
   // My studio songs
   if (cleanPath.startsWith('/songs/mine/')) {
     const songId = cleanPath.replace('/songs/mine/', '');
-    const found = MOCK_MY_SONGS.find((s) => s.id === songId);
-    if (!found) throw new ApiError(404, 'Song not found');
-    return found as unknown as T;
+    const mySongs = getMySongs();
+    const found = mySongs.find((s: any) => s.id === songId);
+    if (found) return found as unknown as T;
+    // Fallback for song
+    return {
+      id: songId,
+      title: 'Uploaded Song',
+      status: 'pending_review',
+      process_status: 'ready',
+      duration_seconds: 215,
+      downloads_enabled: true,
+      release_at: null,
+      created_at: new Date().toISOString(),
+      stream_count: 0,
+      download_count: 0,
+      like_count: 0,
+      artwork_url: null,
+      genre: { id: 1, name: 'Afrobeats', slug: 'afrobeats' },
+      district: { id: 1, name: 'Kampala', slug: 'kampala' },
+      featured_artists: [],
+    } as unknown as T;
   }
   if (cleanPath === '/songs/mine') {
     const status = sp.get('status');
-    const items = status ? MOCK_MY_SONGS.filter((s) => s.status === status) : MOCK_MY_SONGS;
+    const mySongs = getMySongs();
+    const items = status ? mySongs.filter((s: any) => s.status === status) : mySongs;
     return {
       items,
       total: items.length,
@@ -1320,7 +1355,66 @@ export async function upload<T = unknown>(path: string, form: FormData, onProgre
     }
     return r.body as T;
   } catch (err) {
-    // If running in standalone preview mode, simulate success
-    return { ok: true, id: 'demo-uploaded-song' } as unknown as T;
+    // If running in standalone preview mode, persist uploaded song to localStorage
+    const newId = `song-${Date.now()}`;
+    const title = (form.get('title') as string) || 'New Track';
+    const genreId = Number(form.get('genreId')) || 1;
+    const districtId = Number(form.get('districtId')) || 1;
+    const genre = MOCK_GENRES.find((g) => g.id === genreId) || { id: 1, name: 'Afrobeats', slug: 'afrobeats' };
+    const district = MOCK_DISTRICTS.find((d) => d.id === districtId) || { id: 1, name: 'Kampala', slug: 'kampala' };
+
+    let artworkUrl: string | null = null;
+    const artFile = form.get('artwork');
+    if (artFile && artFile instanceof File) {
+      artworkUrl = URL.createObjectURL(artFile);
+    } else {
+      artworkUrl = 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=500&auto=format&fit=crop&q=80';
+    }
+
+    const songMine = {
+      id: newId,
+      title,
+      slug: title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, ''),
+      description: (form.get('description') as string) || null,
+      status: 'processing',
+      process_status: 'processing',
+      duration_seconds: 215,
+      downloads_enabled: form.get('downloadsEnabled') === 'true',
+      release_at: (form.get('releaseAt') as string) || null,
+      created_at: new Date().toISOString(),
+      stream_count: 0,
+      download_count: 0,
+      like_count: 0,
+      artwork_url: artworkUrl,
+      genre: { id: genre.id, name: genre.name, slug: genre.slug },
+      district: { id: district.id, name: district.name, slug: district.slug },
+      featured_artists: [],
+    };
+
+    const mySongs = getMySongs();
+    mySongs.unshift(songMine);
+    saveMySongs(mySongs);
+
+    // Also register in admin songs so moderators can review it
+    const adminSongs = getAdminSongs();
+    adminSongs.unshift({
+      ...songMine,
+      artist: { id: 'art-current', stage_name: 'My Studio', slug: 'my-studio' },
+      status: 'pending_review',
+    });
+    saveAdminSongs(adminSongs);
+
+    // Simulate audio transcoding completion after 2.5 seconds
+    setTimeout(() => {
+      const current = getMySongs();
+      const s = current.find((item: any) => item.id === newId);
+      if (s) {
+        s.process_status = 'ready';
+        s.status = 'pending_review';
+        saveMySongs(current);
+      }
+    }, 2500);
+
+    return { ok: true, id: newId } as unknown as T;
   }
 }

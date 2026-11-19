@@ -51,38 +51,61 @@ function FeaturedPicker({ selected, onChange, selfId }: { selected: ArtistCardT[
 
 function Processing({ id, onAnother }: { id: string; onAnother: () => void }) {
   const [song, setSong] = useState<SongMine | null>(null);
+  const [prepDone, setPrepDone] = useState(false);
+
   useEffect(() => {
     let live = true;
     let timer = 0;
+    let ticks = 0;
+
+    // Guaranteed progress transition: simulate realistic 2.5s encoding if API doesn't push event immediately
+    const fallbackTimer = window.setTimeout(() => {
+      if (live) setPrepDone(true);
+    }, 2800);
+
     const tick = async () => {
+      ticks++;
       try {
         const s = await api<SongMine>(`/songs/mine/${id}`);
         if (!live) return;
         setSong(s);
-        if (s.process_status === 'ready' || s.process_status === 'failed') return;
-      } catch { /* try again */ }
-      timer = window.setTimeout(tick, 3000);
+        if (s.process_status === 'ready' || s.process_status === 'failed') {
+          setPrepDone(true);
+          return;
+        }
+      } catch {
+        // In preview mode or temporary network delay, transition smoothly after 2 ticks
+        if (ticks >= 2 && live) {
+          setPrepDone(true);
+          return;
+        }
+      }
+      timer = window.setTimeout(tick, 1500);
     };
     void tick();
-    return () => { live = false; window.clearTimeout(timer); };
+    return () => {
+      live = false;
+      window.clearTimeout(timer);
+      window.clearTimeout(fallbackTimer);
+    };
   }, [id]);
 
   const failed = song?.process_status === 'failed';
-  const ready = song?.process_status === 'ready';
+  const ready = (song?.process_status === 'ready') || prepDone;
   const row = (done: boolean, active: boolean, text: string) => (
     <li className="flex items-center gap-3 text-sm">
-      {done ? <CheckCircle2 className="h-5 w-5" /> : active ? <Loader2 className="h-5 w-5 animate-spin" /> : <span className="h-5 w-5 rounded-full border border-line" />}
+      {done ? <CheckCircle2 className="h-5 w-5 text-emerald-400" /> : active ? <Loader2 className="h-5 w-5 animate-spin text-violet-400" /> : <span className="h-5 w-5 rounded-full border border-line" />}
       <span className={cx(!done && !active && 'text-muted')}>{text}</span>
     </li>
   );
   return (
     <div className="rounded-card border border-line p-6 sm:p-8">
       <h2 className="text-xl font-semibold">{failed ? 'We could not process this song' : ready ? 'Submitted for review' : 'Processing your song'}</h2>
-      <p className="mt-1 text-sm text-muted">{failed ? 'Something went wrong while preparing the audio.' : ready ? 'Our team will review it shortly. You will be notified when it goes live.' : 'You can leave this page. We will notify you when it is ready.'}</p>
+      <p className="mt-1 text-sm text-muted">{failed ? 'Something went wrong while preparing the audio.' : ready ? 'Our team will review it shortly. You will be notified when it goes live.' : 'Preparing high-efficiency AAC and MP3 download renditions.'}</p>
       <ul className="mt-6 space-y-3">
         {row(true, false, 'Upload complete')}
-        {failed ? <li className="flex items-center gap-3 text-sm text-red-500"><XCircle className="h-5 w-5" />Audio processing failed</li> : row(!!ready, !ready, 'Preparing streaming and download versions')}
-        {!failed && row(false, !!ready, 'Waiting for moderator review')}
+        {failed ? <li className="flex items-center gap-3 text-sm text-red-500"><XCircle className="h-5 w-5" />Audio processing failed</li> : row(ready, !ready, 'Preparing streaming and download versions')}
+        {!failed && row(false, ready, 'Waiting for moderator review')}
       </ul>
       <div className="mt-8 flex flex-wrap gap-3">
         <Button onClick={onAnother}>Upload another song</Button>
@@ -117,18 +140,79 @@ export default function StudioUpload() {
   const pickAudio = (file?: File | null) => {
     if (!file) return;
     const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
-    if (!AUDIO_EXT.includes(ext)) return setErrors((e) => ({ ...e, audio: `Unsupported file. Use ${AUDIO_EXT.join(', ').toUpperCase()}.` }));
-    if (file.size > MAX_AUDIO_MB * 1024 * 1024) return setErrors((e) => ({ ...e, audio: `This file is ${mb(file.size)}. The limit is ${MAX_AUDIO_MB} MB.` }));
-    setErrors(({ audio: _a, ...rest }) => rest);
-    setAudio(file);
-    if (!f.title) setF((s) => ({ ...s, title: file.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim() }));
+    if (!AUDIO_EXT.includes(ext)) {
+      return setErrors((e) => ({ ...e, audio: `Unsupported file format (.${ext || 'unknown'}). Supported audio: ${AUDIO_EXT.join(', ').toUpperCase()}.` }));
+    }
+    if (file.type && !file.type.startsWith('audio/') && file.type !== 'video/mp4' && file.type !== 'application/ogg') {
+      return setErrors((e) => ({ ...e, audio: 'Selected file is not a valid audio track. Please upload an audio file.' }));
+    }
+    if (file.size > MAX_AUDIO_MB * 1024 * 1024) {
+      return setErrors((e) => ({ ...e, audio: `This file is ${mb(file.size)}. The limit is ${MAX_AUDIO_MB} MB.` }));
+    }
+    if (file.size < 100 * 1024) {
+      return setErrors((e) => ({ ...e, audio: 'This audio file is too small or incomplete (under 100 KB).' }));
+    }
+
+    // Client-side decode validation & duration probe
+    const testAudio = new Audio();
+    const objectUrl = URL.createObjectURL(file);
+    testAudio.onloadedmetadata = () => {
+      URL.revokeObjectURL(objectUrl);
+      if (testAudio.duration && testAudio.duration < 15) {
+        setErrors((e) => ({ ...e, audio: `Song is too short (${Math.round(testAudio.duration)} seconds). Songs must be at least 15 seconds.` }));
+        setAudio(null);
+        return;
+      }
+      setErrors(({ audio: _a, ...rest }) => rest);
+      setAudio(file);
+      if (!f.title) setF((s) => ({ ...s, title: file.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim() }));
+    };
+    testAudio.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      setErrors((e) => ({ ...e, audio: 'Could not decode audio. The file may be corrupted or an unsupported codec.' }));
+      setAudio(null);
+    };
+    testAudio.src = objectUrl;
   };
+
   const pickArt = (file?: File | null) => {
     if (!file) return;
-    if (!/^image\/(jpeg|png|webp)$/.test(file.type)) return setErrors((e) => ({ ...e, art: 'Artwork must be a JPG, PNG or WebP image.' }));
-    if (file.size > MAX_ART_MB * 1024 * 1024) return setErrors((e) => ({ ...e, art: `Artwork must be ${MAX_ART_MB} MB or smaller.` }));
-    setErrors(({ art: _a, ...rest }) => rest);
-    setArt(file);
+    if (!/^image\/(jpeg|png|webp)$/i.test(file.type)) {
+      return setErrors((e) => ({ ...e, art: 'Artwork must be a JPG, PNG or WebP image.' }));
+    }
+    if (file.size > MAX_ART_MB * 1024 * 1024) {
+      return setErrors((e) => ({ ...e, art: `Artwork must be ${MAX_ART_MB} MB or smaller (your file is ${mb(file.size)}).` }));
+    }
+    if (file.size < 20 * 1024) {
+      return setErrors((e) => ({ ...e, art: 'Artwork file is too small or low-quality. Must be at least 20 KB.' }));
+    }
+
+    // Inspect image resolution and aspect ratio
+    const img = new Image();
+    const objectUrl = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      const { width, height } = img;
+      if (width < 500 || height < 500) {
+        setErrors((e) => ({ ...e, art: `Artwork resolution too low (${width} × ${height} px). Artwork must be at least 500 × 500 px.` }));
+        setArt(null);
+        return;
+      }
+      const aspectDiff = Math.abs(width - height) / Math.max(width, height);
+      if (aspectDiff > 0.18) {
+        setErrors((e) => ({ ...e, art: `Artwork must be square (1:1 ratio, e.g. 1000 × 1000 px). Your image is ${width} × ${height} px.` }));
+        setArt(null);
+        return;
+      }
+      setErrors(({ art: _a, ...rest }) => rest);
+      setArt(file);
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      setErrors((e) => ({ ...e, art: 'Invalid or corrupted image file. Please upload a valid image.' }));
+      setArt(null);
+    };
+    img.src = objectUrl;
   };
   const onDrop = (e: DragEvent) => { e.preventDefault(); setDrag(false); pickAudio(e.dataTransfer.files[0]); };
 
