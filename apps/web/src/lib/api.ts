@@ -636,9 +636,13 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
         if (password && password !== 'admin12345678') {
           throw new ApiError(401, 'Invalid email or password. Please check your credentials or create an account.');
         }
-      } else if (user.password_hash && password) {
-        if (user.password_hash !== password && user.password_hash !== 'waxo_pwd_hash') {
+      } else if (password) {
+        if (user.password_hash && user.password_hash !== 'waxo_pwd_hash' && user.password_hash !== password) {
           throw new ApiError(401, 'Invalid email or password. Please check your credentials or create an account.');
+        }
+        if (user.password_hash === 'waxo_pwd_hash') {
+          user.password_hash = password;
+          syncUserToCloud(user, password).catch(() => undefined);
         }
       }
 

@@ -6,28 +6,30 @@ import { ThemeProvider } from './lib/theme';
 import { ToastProvider } from './lib/toast';
 import { AuthProvider } from './lib/auth';
 import { PlayerProvider } from './lib/player';
+import { syncUserToCloud } from './lib/supabase';
 import './styles/index.css';
 
-// Automated storage reset to wipe obsolete client demo mocks across all devices (PC & Phone)
-const WAXO_STORAGE_VERSION = 'waxo_v4_clean_slate';
-if (typeof window !== 'undefined' && localStorage.getItem('waxo.storage_ver') !== WAXO_STORAGE_VERSION) {
+// Auto-sync any existing local user accounts or active session to Supabase Cloud on boot
+if (typeof window !== 'undefined') {
   try {
-    const keysToPurge = [
-      'waxo.registered_users',
-      'waxo.admin_songs',
-      'waxo.admin_artists',
-      'waxo.admin_reports',
-      'waxo.admin_copyright',
-      'waxo.my_songs',
-      'waxo.demo_user',
-      'waxo.audit_logs',
-      'waxo.mock_notifications',
-      'waxo.schema_version',
-    ];
-    for (const key of keysToPurge) {
-      localStorage.removeItem(key);
+    const raw = localStorage.getItem('waxo.registered_users');
+    if (raw) {
+      const users = JSON.parse(raw);
+      if (Array.isArray(users)) {
+        for (const u of users) {
+          if (u.email && !u.email.startsWith('admin@')) {
+            syncUserToCloud(u).catch(() => undefined);
+          }
+        }
+      }
     }
-    localStorage.setItem('waxo.storage_ver', WAXO_STORAGE_VERSION);
+    const active = localStorage.getItem('waxo.demo_user');
+    if (active) {
+      const u = JSON.parse(active);
+      if (u.email && !u.email.startsWith('admin@')) {
+        syncUserToCloud(u).catch(() => undefined);
+      }
+    }
   } catch {}
 }
 
