@@ -11,6 +11,13 @@ import {
   getAudioStreamForSong,
 } from './mockData';
 import type { Me } from './types';
+import {
+  syncUserToCloud,
+  syncUserFromCloud,
+  syncAllUsersFromCloud,
+  syncSongToCloud,
+  syncAllSongsFromCloud,
+} from './supabase';
 
 export class ApiError extends Error {
   constructor(public status: number, message: string, public code?: string) { super(message); }
@@ -76,6 +83,45 @@ export function saveRegisteredUser(user: StoredUser) {
     users.push(user);
     localStorage.setItem('waxo.registered_users', JSON.stringify(users));
   } catch {}
+}
+
+// Background sync from Supabase cloud so phone accounts and uploaded songs sync to laptop
+if (typeof window !== 'undefined') {
+  setTimeout(() => {
+    syncAllUsersFromCloud().then((cloudUsers) => {
+      if (cloudUsers && cloudUsers.length > 0) {
+        const local = getRegisteredUsers();
+        let updated = false;
+        for (const cu of cloudUsers) {
+          const idx = local.findIndex((lu) => lu.email.toLowerCase() === cu.email.toLowerCase());
+          if (idx === -1) {
+            local.push(cu);
+            updated = true;
+          } else {
+            local[idx] = { ...local[idx], ...cu };
+            updated = true;
+          }
+        }
+        if (updated) {
+          try { localStorage.setItem('waxo.registered_users', JSON.stringify(local)); } catch {}
+        }
+      }
+    }).catch(() => undefined);
+
+    syncAllSongsFromCloud().then((cloudSongs) => {
+      if (cloudSongs && cloudSongs.length > 0) {
+        const localAdmin = getAdminSongs();
+        let changed = false;
+        for (const cs of cloudSongs) {
+          if (!localAdmin.some((ls) => ls.id === cs.id)) {
+            localAdmin.unshift(cs);
+            changed = true;
+          }
+        }
+        if (changed) saveAdminSongs(localAdmin);
+      }
+    }).catch(() => undefined);
+  }, 100);
 }
 
 export function getMySongs(): any[] {
@@ -415,6 +461,9 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
     };
     saveRegisteredUser(user);
 
+    // Save to Supabase cloud database for instant cross-device access (phone -> laptop)
+    syncUserToCloud(user, (body as any)?.password).catch(() => undefined);
+
     // Synchronize into admin artists queue
     const adminArtists = getAdminArtists();
     if (!adminArtists.some((a) => a.id === user.id || a.email?.toLowerCase() === email)) {
@@ -486,6 +535,7 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
       verification_token: code,
     };
     saveRegisteredUser(user);
+    syncUserToCloud(user, (body as any)?.password).catch(() => undefined);
     recordAudit('user.registered', 'user', email, user.id, { displayName });
     try {
       const active = localStorage.getItem('waxo.demo_user');
@@ -536,6 +586,7 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
 
       found.email_verified_at = new Date().toISOString();
       saveRegisteredUser(found);
+      syncUserToCloud(found).catch(() => undefined);
       if (currentDemoUser && currentDemoUser.email.toLowerCase() === found.email.toLowerCase()) {
         currentDemoUser.email_verified_at = found.email_verified_at;
         try { localStorage.setItem('waxo.demo_user', JSON.stringify(currentDemoUser)); } catch {}
@@ -579,9 +630,18 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
       return { accessToken: 'demo-token-admin' } as unknown as T;
     }
 
-    // 2. Check registered users
+    // 2. Check registered users locally, or query central Supabase cloud database
     const registered = getRegisteredUsers();
-    const user = registered.find((u) => u.email.toLowerCase() === email);
+    let user = registered.find((u) => u.email.toLowerCase() === email);
+
+    if (!user) {
+      // Check cloud Supabase database for account created on another device (e.g. phone)
+      const cloudUser = await syncUserFromCloud(email);
+      if (cloudUser) {
+        saveRegisteredUser(cloudUser);
+        user = cloudUser;
+      }
+    }
 
     if (user) {
       if (!user.email_verified_at) {
@@ -648,6 +708,7 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
         district_id: body?.districtId || 1,
       };
       saveRegisteredUser(reg);
+      syncUserToCloud(reg).catch(() => undefined);
     }
 
     currentDemoUser = {
@@ -1021,6 +1082,7 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
       if (reg) {
         reg.artist_approval = 'active';
         saveRegisteredUser(reg);
+      syncUserToCloud(reg).catch(() => undefined);
       }
       recordAudit('artist.approved', 'artist_profile', 'admin@waxo.com', artistId, { stageName: artist.stage_name });
     }
@@ -1040,6 +1102,7 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
       if (reg) {
         reg.artist_approval = 'rejected';
         saveRegisteredUser(reg);
+      syncUserToCloud(reg).catch(() => undefined);
       }
       recordAudit('artist.rejected', 'artist_profile', 'admin@waxo.com', artistId, { reason });
     }
@@ -1058,6 +1121,7 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
       if (reg) {
         reg.artist_approval = 'suspended';
         saveRegisteredUser(reg);
+      syncUserToCloud(reg).catch(() => undefined);
       }
       recordAudit('artist.suspended', 'artist_profile', 'admin@waxo.com', artistId, { reason });
     }
@@ -1075,6 +1139,7 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
       if (reg) {
         reg.artist_approval = 'active';
         saveRegisteredUser(reg);
+      syncUserToCloud(reg).catch(() => undefined);
       }
       recordAudit('artist.reinstated', 'artist_profile', 'admin@waxo.com', artistId);
     }
@@ -1732,6 +1797,7 @@ export async function upload<T = unknown>(path: string, form: FormData, onProgre
       status: 'pending_review',
     });
     saveAdminSongs(adminSongs);
+    syncSongToCloud(songMine).catch(() => undefined);
     recordAudit('song.uploaded', 'song', currentDemoUser?.email || 'artist', newId, { title });
 
     // Simulate audio transcoding completion after 2.5 seconds
