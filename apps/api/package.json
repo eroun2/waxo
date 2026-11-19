@@ -6,8 +6,8 @@
     "build": "nest build",
     "start": "node dist/main.js",
     "start:dev": "nest start --watch",
-    "migrate": "ts-node src/database/migrate.ts",
-    "create-admin": "ts-node src/database/create-admin.ts"
+    "migrate": "ts-node -T src/database/migrate.ts",
+    "create-admin": "ts-node -T src/database/create-admin.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.620.0",
