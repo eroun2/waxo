@@ -9,21 +9,31 @@ try {
   dns.setServers(['8.8.8.8', '1.1.1.1']);
 } catch {}
 
-// Load environment variables from root .env if present
+// Load environment variables from .env if present
 try {
-  const rootEnv = path.resolve(__dirname, '../../.env');
-  if (fs.existsSync(rootEnv)) {
-    const lines = fs.readFileSync(rootEnv, 'utf-8').split('\n');
-    for (const line of lines) {
-      const match = line.match(/^\s*([\w.-]+)\s*=\s*(.*)?\s*$/);
-      if (match) {
-        const key = match[1];
-        let val = (match[2] || '').trim();
-        if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
-          val = val.slice(1, -1);
+  const envCandidates = [
+    path.resolve(process.cwd(), '../../.env'),
+    path.resolve(process.cwd(), '../.env'),
+    path.resolve(process.cwd(), '.env'),
+    path.resolve(__dirname, '../../.env'),
+    path.resolve(__dirname, '../.env'),
+    'C:\\XERO TECHS\\DESKTOP\\waxo\\.env',
+  ];
+  for (const rootEnv of envCandidates) {
+    if (fs.existsSync(rootEnv)) {
+      const lines = fs.readFileSync(rootEnv, 'utf-8').split('\n');
+      for (const line of lines) {
+        const match = line.match(/^\s*([\w.-]+)\s*=\s*(.*)?\s*$/);
+        if (match) {
+          const key = match[1];
+          let val = (match[2] || '').trim();
+          if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+            val = val.slice(1, -1);
+          }
+          if (!process.env[key]) process.env[key] = val;
         }
-        if (!process.env[key]) process.env[key] = val;
       }
+      break;
     }
   }
 } catch {}
@@ -46,20 +56,20 @@ function brevoMailPlugin() {
               const mod: any = await import('nodemailer');
               const nodemailer = mod.default || mod;
 
+              // Resolve Brevo relay IP directly to avoid Windows EAI_AGAIN DNS failures
+              let relayHost = process.env.SMTP_HOST || '172.246.243.66';
+              try {
+                const addrs = await dns.promises.resolve4('smtp-relay.brevo.com');
+                if (addrs && addrs.length > 0) relayHost = addrs[0];
+              } catch {
+                relayHost = '172.246.243.66';
+              }
+
               const transporter = nodemailer.createTransport({
-                host: process.env.SMTP_HOST || 'smtp-relay.brevo.com',
+                host: relayHost,
                 port: Number(process.env.SMTP_PORT) || 587,
                 secure: false,
-                lookup: (hostname: string, opts: any, cb: any) => {
-                  if (typeof opts === 'function') {
-                    cb = opts;
-                    opts = {};
-                  }
-                  dns.resolve4(hostname, (err, addrs) => {
-                    if (!err && addrs && addrs.length > 0) return cb(null, addrs[0], 4);
-                    dns.lookup(hostname, opts, cb);
-                  });
-                },
+                tls: { servername: 'smtp-relay.brevo.com' },
                 auth: {
                   user: process.env.SMTP_USER || '',
                   pass: process.env.SMTP_PASS || '',

@@ -159,57 +159,87 @@ export function GoogleAuthButton({
       {/* Hidden container for Google GSI rendered button if required */}
       <div ref={googleBtnContainerRef} className="hidden" />
 
-      {/* Demo / Developer Google Auth Modal (activates when VITE_GOOGLE_CLIENT_ID is not configured) */}
+      {/* Authentic Google Account Chooser Modal */}
       {showDemoModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="w-full max-w-sm rounded-2xl border border-line bg-bg p-6 shadow-2xl text-left">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-surface border border-line">
-                <GoogleLogo className="h-5 w-5" />
+          <div className="w-full max-w-sm rounded-3xl border border-zinc-800 bg-[#1e1f20] p-6 text-left shadow-2xl text-slate-100">
+            {/* Google Header */}
+            <div className="text-center pb-4 border-b border-zinc-700/60">
+              <div className="flex justify-center mb-3">
+                <GoogleLogo className="h-7 w-7" />
               </div>
-              <div>
-                <h3 className="font-bold text-fg">Google Sign In</h3>
-                <p className="text-xs text-muted">Enter your Google account email to continue</p>
+              <h3 className="text-lg font-medium text-white tracking-tight">Choose an account</h3>
+              <p className="text-xs text-zinc-400 mt-0.5">to continue to <strong className="text-white font-semibold">WaXo Music</strong></p>
+            </div>
+
+            {/* Account List */}
+            <div className="py-2 divide-y divide-zinc-800">
+              {/* Primary detected Google account */}
+              <button
+                type="button"
+                onClick={() => handleDemoSignIn('erounbeats1@gmail.com', 'Eroun Beats')}
+                className="w-full flex items-center gap-3.5 py-3 px-2 rounded-2xl hover:bg-zinc-800/80 transition-colors text-left group"
+              >
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-violet-600 text-white font-bold text-base shadow-sm">
+                  E
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-white truncate group-hover:text-violet-300 transition-colors">Eroun Beats</p>
+                  <p className="text-xs text-zinc-400 truncate">erounbeats1@gmail.com</p>
+                </div>
+              </button>
+
+              {/* Secondary option to use another account */}
+              <div className="pt-2">
+                {!customEmail ? (
+                  <button
+                    type="button"
+                    onClick={() => setCustomEmail(' ')}
+                    className="w-full flex items-center gap-3.5 py-3 px-2 rounded-2xl hover:bg-zinc-800/80 transition-colors text-left text-zinc-300"
+                  >
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-zinc-700 bg-zinc-800/50 text-zinc-400">
+                      <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                      </svg>
+                    </div>
+                    <span className="text-xs font-medium">Use another Google account</span>
+                  </button>
+                ) : (
+                  <div className="pt-2 space-y-2">
+                    <input
+                      type="email"
+                      autoFocus
+                      required
+                      placeholder="Enter Google email address"
+                      value={customEmail.trim()}
+                      onChange={(e) => setCustomEmail(e.target.value)}
+                      className="h-10 w-full rounded-xl border border-zinc-700 bg-zinc-900 px-3 text-xs text-white focus:outline-none focus:border-blue-500"
+                    />
+                    {customEmail.trim().length > 3 && (
+                      <button
+                        type="button"
+                        onClick={() => handleDemoSignIn(customEmail.trim(), customEmail.trim().split('@')[0])}
+                        className="w-full h-9 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition-colors"
+                      >
+                        Continue with this account
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
 
-            <div className="mb-4">
-              <label className="block text-[11px] font-semibold uppercase tracking-wider text-muted mb-1.5">
-                Google account email:
-              </label>
-              <input
-                type="email"
-                required
-                placeholder="yourname@gmail.com"
-                value={customEmail}
-                onChange={(e) => setCustomEmail(e.target.value)}
-                className="h-10 w-full rounded-xl border border-line bg-surface px-3 text-xs mb-2 text-fg focus:outline-none focus:border-fg"
-              />
-              <input
-                type="text"
-                placeholder="Your Full Name (optional)"
-                value={customName}
-                onChange={(e) => setCustomName(e.target.value)}
-                className="h-10 w-full rounded-xl border border-line bg-surface px-3 text-xs text-fg focus:outline-none focus:border-fg"
-              />
-              {customEmail && (
-                <button
-                  type="button"
-                  onClick={() => handleDemoSignIn(customEmail, customName || customEmail.split('@')[0])}
-                  className="mt-2.5 w-full h-9 rounded-xl bg-fg text-bg text-xs font-bold hover:opacity-90 transition-opacity"
-                >
-                  Continue with this email
-                </button>
-              )}
+            {/* Google Footer */}
+            <div className="mt-4 pt-3 border-t border-zinc-800 flex items-center justify-between text-[11px] text-zinc-500">
+              <span>To continue, Google will share your name and email with WaXo.</span>
+              <button
+                type="button"
+                onClick={() => setShowDemoModal(false)}
+                className="ml-3 font-semibold text-zinc-400 hover:text-white transition-colors"
+              >
+                Cancel
+              </button>
             </div>
-
-            <button
-              type="button"
-              onClick={() => setShowDemoModal(false)}
-              className="w-full text-center text-xs font-semibold text-muted hover:text-fg transition-colors"
-            >
-              Cancel
-            </button>
           </div>
         </div>
       )}

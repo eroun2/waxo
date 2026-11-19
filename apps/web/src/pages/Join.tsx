@@ -317,7 +317,7 @@ export default function Join() {
             </div>
           </div>
 
-          <div>{as === 'artist' ? <ArtistForm onDone={setDoneEmail} /> : <ListenerForm onDone={setDoneEmail} />}</div>
+          <div>{as === 'artist' ? <ArtistForm onDone={(em, c) => { setDoneEmail(em); if (c) setDoneCode(c); }} /> : <ListenerForm onDone={(em, c) => { setDoneEmail(em); if (c) setDoneCode(c); }} />}</div>
           <p className="mt-6 text-center text-sm text-muted">Already have an account? <Link to="/login" className="font-medium text-fg underline">Log in</Link></p>
         </>
       )}
