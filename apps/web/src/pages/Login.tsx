@@ -257,23 +257,6 @@ export default function Login() {
         </Button>
       </form>
 
-      <div className="mt-6 rounded-2xl border border-line bg-surface/60 p-4 text-xs shadow-xs text-left">
-        <p className="font-bold text-fg mb-1.5 flex items-center gap-1.5">
-          <Shield className="h-4 w-4 text-amber-400" />
-          Quick Admin Account:
-        </p>
-        <p className="text-muted mb-2.5">Click to auto-fill administrator credentials:</p>
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={() => { setEmail('admin@waxo.com'); setPassword('admin12345678'); setUnverified(false); }}
-            className="px-3 py-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-400 font-semibold hover:bg-amber-500/20 transition-colors"
-          >
-            Admin (admin@waxo.com)
-          </button>
-        </div>
-      </div>
-
       <p className="mt-6 text-center text-sm text-muted">
         New to WaXo? <Link to="/join" className="font-medium text-fg underline">Create an account</Link>
       </p>

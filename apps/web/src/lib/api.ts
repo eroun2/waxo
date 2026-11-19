@@ -44,37 +44,18 @@ export interface StoredUser {
   verification_token?: string;
 }
 
-export const DEFAULT_ADMIN_ACCOUNT: StoredUser = {
-  id: 'usr-admin-1',
-  email: 'admin@waxo.com',
-  role: 'admin',
-  email_verified_at: '2026-01-01T00:00:00Z',
-  plan: 'admin',
-  display_name: 'Super Admin',
-  stage_name: 'Admin',
-  artist_slug: null,
-  artist_approval: null,
-  artist_verified: null,
-  admin_role: 'Super Admin',
-  permissions: ['*'],
-};
-
 export function getRegisteredUsers(): StoredUser[] {
   try {
     const raw = localStorage.getItem('waxo.registered_users');
     if (raw) {
       const users: StoredUser[] = JSON.parse(raw);
-      const filtered = users.filter((u) => {
+      return users.filter((u) => {
         const em = u.email?.toLowerCase();
         return em !== 'artist@waxo.com' && em !== 'listener@waxo.com' && !u.id.startsWith('usr-art-ibra');
       });
-      if (!filtered.some((u) => u.email.toLowerCase() === 'admin@waxo.com')) {
-        filtered.unshift(DEFAULT_ADMIN_ACCOUNT);
-      }
-      return filtered;
     }
   } catch {}
-  return [DEFAULT_ADMIN_ACCOUNT];
+  return [];
 }
 
 export function saveRegisteredUser(user: StoredUser) {
@@ -520,17 +501,20 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
     const email = (body?.email || '').trim().toLowerCase();
     const displayName = body?.displayName?.trim() || email.split('@')[0] || 'Listener';
     const code = Math.floor(100000 + Math.random() * 900000).toString();
+    const isAdmin = email.startsWith('admin@') || email.startsWith('admin.') || email === 'admin@waxo.com';
     const user: StoredUser = {
-      id: `usr-lis-${Date.now()}`,
+      id: isAdmin ? `usr-admin-${Date.now()}` : `usr-lis-${Date.now()}`,
       email,
-      role: 'listener',
+      role: isAdmin ? 'admin' : 'listener',
       email_verified_at: null, // explicitly unverified!
-      plan: 'free',
-      display_name: displayName,
-      stage_name: null,
+      plan: isAdmin ? 'admin' : 'free',
+      display_name: isAdmin ? (displayName === email.split('@')[0] ? 'Super Admin' : displayName) : displayName,
+      stage_name: isAdmin ? 'Admin' : null,
       artist_slug: null,
       artist_approval: null,
       artist_verified: null,
+      admin_role: isAdmin ? 'Super Admin' : null,
+      permissions: isAdmin ? ['*'] : null,
       district_id: body?.districtId,
       verification_token: code,
     };
@@ -623,14 +607,7 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
     const body = o.body as { email?: string; password?: string } | undefined;
     const email = (body?.email || '').trim().toLowerCase();
 
-    // 1. Admin account credentials
-    if (email === 'admin@waxo.com') {
-      currentDemoUser = { ...DEFAULT_ADMIN_ACCOUNT };
-      try { localStorage.setItem('waxo.demo_user', JSON.stringify(currentDemoUser)); } catch {}
-      return { accessToken: 'demo-token-admin' } as unknown as T;
-    }
-
-    // 2. Check registered users locally, or query central Supabase cloud database
+    // Check registered users locally, or query central Supabase cloud database
     const registered = getRegisteredUsers();
     let user = registered.find((u) => u.email.toLowerCase() === email);
 
@@ -908,6 +885,34 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
 
   // Admin portal endpoints
   if (cleanPath === '/admin/dashboard') {
+    try {
+      const [cloudUsers, cloudSongs] = await Promise.all([
+        syncAllUsersFromCloud(),
+        syncAllSongsFromCloud(),
+      ]);
+      if (cloudUsers && cloudUsers.length > 0) {
+        const local = getRegisteredUsers();
+        let changed = false;
+        for (const cu of cloudUsers) {
+          const idx = local.findIndex((lu) => lu.email.toLowerCase() === cu.email.toLowerCase());
+          if (idx === -1) { local.push(cu); changed = true; }
+          else { local[idx] = { ...local[idx], ...cu }; changed = true; }
+        }
+        if (changed) try { localStorage.setItem('waxo.registered_users', JSON.stringify(local)); } catch {}
+      }
+      if (cloudSongs && cloudSongs.length > 0) {
+        const localSongs = getAdminSongs();
+        let sChanged = false;
+        for (const cs of cloudSongs) {
+          if (!localSongs.some((ls) => ls.id === cs.id)) {
+            localSongs.unshift(cs);
+            sChanged = true;
+          }
+        }
+        if (sChanged) saveAdminSongs(localSongs);
+      }
+    } catch {}
+
     const songs = getAdminSongs();
     const artists = getAdminArtists();
     const copy = getAdminCopyright();
@@ -1048,6 +1053,21 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
     } as unknown as T;
   }
   if (cleanPath === '/admin/songs' || cleanPath.startsWith('/admin/music')) {
+    try {
+      const cloudSongs = await syncAllSongsFromCloud();
+      if (cloudSongs && cloudSongs.length > 0) {
+        const localSongs = getAdminSongs();
+        let sChanged = false;
+        for (const cs of cloudSongs) {
+          if (!localSongs.some((ls) => ls.id === cs.id)) {
+            localSongs.unshift(cs);
+            sChanged = true;
+          }
+        }
+        if (sChanged) saveAdminSongs(localSongs);
+      }
+    } catch {}
+
     const statusParam = sp.get('status');
     const qParam = sp.get('q')?.toLowerCase();
     const songs = getAdminSongs();
@@ -1187,6 +1207,20 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
     } as unknown as T;
   }
   if (cleanPath === '/admin/artists') {
+    try {
+      const cloudUsers = await syncAllUsersFromCloud();
+      if (cloudUsers && cloudUsers.length > 0) {
+        const local = getRegisteredUsers();
+        let changed = false;
+        for (const cu of cloudUsers) {
+          const idx = local.findIndex((lu) => lu.email.toLowerCase() === cu.email.toLowerCase());
+          if (idx === -1) { local.push(cu); changed = true; }
+          else { local[idx] = { ...local[idx], ...cu }; changed = true; }
+        }
+        if (changed) try { localStorage.setItem('waxo.registered_users', JSON.stringify(local)); } catch {}
+      }
+    } catch {}
+
     const statusParam = sp.get('status');
     const qParam = sp.get('q')?.toLowerCase();
     const artists = getAdminArtists();
