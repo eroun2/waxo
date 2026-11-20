@@ -128,13 +128,17 @@ export async function syncUserToCloud(user: StoredUser, rawPassword?: string): P
           }),
         });
       } else {
+        const patchBody: any = {
+          stage_name: stageName,
+        };
+        // Never overwrite existing approved profile with pending from local storage
+        if (user.artist_approval === 'active') {
+          patchBody.approval_status = 'active';
+          patchBody.is_verified = true;
+        }
         await supabaseRest(`artist_profiles?user_id=eq.${userId}`, {
           method: 'PATCH',
-          body: JSON.stringify({
-            stage_name: stageName,
-            approval_status: user.artist_approval || 'pending',
-            is_verified: user.artist_verified || false,
-          }),
+          body: JSON.stringify(patchBody),
         });
       }
     }

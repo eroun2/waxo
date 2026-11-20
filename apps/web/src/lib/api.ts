@@ -72,41 +72,45 @@ export function saveRegisteredUser(user: StoredUser) {
 
 // Background sync from Supabase cloud so phone accounts and uploaded songs sync to laptop
 if (typeof window !== 'undefined') {
-  setTimeout(() => {
-    syncAllUsersFromCloud().then((cloudUsers) => {
-      if (cloudUsers && cloudUsers.length > 0) {
-        const local = getRegisteredUsers();
-        let updated = false;
-        for (const cu of cloudUsers) {
-          const idx = local.findIndex((lu) => lu.email.toLowerCase() === cu.email.toLowerCase());
-          if (idx === -1) {
-            local.push(cu);
-            updated = true;
-          } else {
-            local[idx] = { ...local[idx], ...cu };
-            updated = true;
-          }
+  syncAllUsersFromCloud().then((cloudUsers) => {
+    if (cloudUsers && cloudUsers.length > 0) {
+      const local = getRegisteredUsers();
+      let updated = false;
+      for (const cu of cloudUsers) {
+        const idx = local.findIndex((lu) => lu.email.toLowerCase() === cu.email.toLowerCase());
+        if (idx === -1) {
+          local.push(cu);
+          updated = true;
+        } else {
+          local[idx] = { ...local[idx], ...cu };
+          updated = true;
         }
-        if (updated) {
-          try { localStorage.setItem('waxo.registered_users', JSON.stringify(local)); } catch {}
+        if (currentDemoUser && currentDemoUser.email.toLowerCase() === cu.email.toLowerCase()) {
+          currentDemoUser.artist_approval = cu.artist_approval;
+          currentDemoUser.artist_verified = cu.artist_verified;
+          currentDemoUser.stage_name = cu.stage_name || currentDemoUser.stage_name;
+          try { localStorage.setItem('waxo.demo_user', JSON.stringify(currentDemoUser)); } catch {}
         }
       }
-    }).catch(() => undefined);
+      if (updated) {
+        try { localStorage.setItem('waxo.registered_users', JSON.stringify(local)); } catch {}
+      }
+    }
+  }).catch(() => undefined);
 
-    syncAllSongsFromCloud().then((cloudSongs) => {
-      if (cloudSongs && cloudSongs.length > 0) {
-        const localAdmin = getAdminSongs();
-        let changed = false;
-        for (const cs of cloudSongs) {
-          if (!localAdmin.some((ls) => ls.id === cs.id)) {
-            localAdmin.unshift(cs);
-            changed = true;
-          }
+  syncAllSongsFromCloud().then((cloudSongs) => {
+    if (cloudSongs && cloudSongs.length > 0) {
+      const localAdmin = getAdminSongs();
+      let changed = false;
+      for (const cs of cloudSongs) {
+        if (!localAdmin.some((ls) => ls.id === cs.id)) {
+          localAdmin.unshift(cs);
+          changed = true;
         }
-        if (changed) saveAdminSongs(localAdmin);
       }
-    }).catch(() => undefined);
-  }, 100);
+      if (changed) saveAdminSongs(localAdmin);
+    }
+  }).catch(() => undefined);
 }
 
 export function getMySongs(): any[] {
@@ -368,11 +372,15 @@ let currentDemoUser: Me | null = (() => {
       const reg = getRegisteredUsers().find((u) => u.email.toLowerCase() === em);
       if (reg) {
         parsed.role = reg.role;
-        parsed.stage_name = reg.stage_name;
-        parsed.display_name = reg.display_name;
-        parsed.artist_slug = reg.artist_slug;
-        parsed.artist_approval = reg.artist_approval;
-        parsed.artist_verified = reg.artist_verified;
+        parsed.stage_name = reg.stage_name || parsed.stage_name;
+        parsed.display_name = reg.display_name || parsed.display_name;
+        parsed.artist_slug = reg.artist_slug || parsed.artist_slug;
+        if (reg.artist_approval === 'active' || parsed.artist_approval === 'active') {
+          parsed.artist_approval = 'active';
+        } else {
+          parsed.artist_approval = reg.artist_approval || parsed.artist_approval;
+        }
+        parsed.artist_verified = parsed.artist_verified || reg.artist_verified;
       }
     }
     return parsed;
@@ -811,6 +819,8 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
       } catch {}
     }
     const registered = getRegisteredUsers().find((u) => u.email.toLowerCase() === currentDemoUser?.email.toLowerCase());
+    const isApproved = cloud?.artist_approval === 'active' || currentDemoUser?.artist_approval === 'active' || registered?.artist_approval === 'active';
+    const finalApproval = isApproved ? 'active' : (cloud?.artist_approval || currentDemoUser?.artist_approval || registered?.artist_approval || 'pending');
     return {
       id: cloud?.id || currentDemoUser?.id || 'art-me',
       stage_name: cloud?.stage_name || registered?.stage_name || currentDemoUser?.stage_name || currentDemoUser?.display_name || 'My Artist Profile',
@@ -818,14 +828,14 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
       phone: cloud?.phone || registered?.phone || '',
       district_id: cloud?.district_id || registered?.district_id || 1,
       slug: cloud?.artist_slug || registered?.artist_slug || 'artist',
-      approval_status: cloud?.artist_approval || registered?.artist_approval || currentDemoUser?.artist_approval || 'active',
+      approval_status: finalApproval,
       review_note: null,
       district: 'Kampala',
       district_slug: 'kampala',
       town: cloud?.town || registered?.town || 'Kampala Central',
       bio: cloud?.bio || registered?.bio || '',
       social_links: {},
-      is_verified: cloud?.artist_verified ?? registered?.artist_verified ?? currentDemoUser?.artist_verified ?? false,
+      is_verified: isApproved ? true : (cloud?.artist_verified ?? registered?.artist_verified ?? currentDemoUser?.artist_verified ?? false),
       follower_count: 0,
       avatarUrl: null,
       coverUrl: null,
@@ -845,8 +855,10 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
     const totalDownloads = mySongs.reduce((sum, s: any) => sum + (Number(s.download_count) || 0), 0);
     const totalLikes = mySongs.reduce((sum, s: any) => sum + (Number(s.like_count) || 0), 0);
     const registered = getRegisteredUsers().find((u) => u.email.toLowerCase() === currentDemoUser?.email.toLowerCase());
+    const isApproved = cloud?.artist_approval === 'active' || currentDemoUser?.artist_approval === 'active' || registered?.artist_approval === 'active';
+    const finalApproval = isApproved ? 'active' : (cloud?.artist_approval || currentDemoUser?.artist_approval || registered?.artist_approval || 'pending');
     return {
-      approvalStatus: cloud?.artist_approval || registered?.artist_approval || currentDemoUser?.artist_approval || 'active',
+      approvalStatus: finalApproval,
       songs: {
         live: mySongs.filter((s: any) => s.status === 'approved').length,
         scheduled: mySongs.filter((s: any) => s.status === 'scheduled').length,
