@@ -195,15 +195,15 @@ export function SongRow({ song, list, rank }: { song: SongCardT; list: SongCardT
       </div>
 
       <div className="hidden items-center gap-2 md:flex">
-        {song.genre && (
+        {song.genre?.name && (
           <span className="rounded-md border border-line bg-surface/80 px-2 py-0.5 text-xs font-medium text-muted">
-            {song.genre.name}
+            {typeof song.genre === 'string' ? song.genre : song.genre.name}
           </span>
         )}
-        {song.district && (
+        {song.district?.name && (
           <span className="flex items-center gap-1 rounded-md border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-400">
             <MapPin className="h-3 w-3" />
-            {song.district.name}
+            {typeof song.district === 'string' ? song.district : song.district.name}
           </span>
         )}
       </div>

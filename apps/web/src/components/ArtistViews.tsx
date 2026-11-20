@@ -29,7 +29,7 @@ export function ArtistCard({ artist }: { artist: ArtistCardT }) {
       <p className="mt-0.5 flex items-center justify-center gap-1.5 truncate text-xs text-muted">
         <span className="flex items-center gap-0.5 text-emerald-400">
           <MapPin className="h-3 w-3" />
-          {artist.district.name}
+          {artist.district?.name ?? 'Unknown'}
         </span>
         <span>·</span>
         <span className="flex items-center gap-0.5">

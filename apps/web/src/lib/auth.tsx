@@ -53,7 +53,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const logout = async () => {
-    await api('/auth/logout', { method: 'POST' }).catch(() => undefined);
+    await api('/auth/logout').catch(() => undefined); // Default to GET
     setAccessToken(null); setMe(null); setStatus('anon');
   };
 
