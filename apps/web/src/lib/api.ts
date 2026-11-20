@@ -971,6 +971,8 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
         const localSongs = getAdminSongs();
         let sChanged = false;
         for (const cs of cloudSongs) {
+          const dupIdx = localSongs.findIndex((ls) => String(ls.id).startsWith('song-') && (ls.title||'').toLowerCase() === (cs.title||'').toLowerCase());
+          if (dupIdx !== -1) { localSongs.splice(dupIdx, 1); }
           if (!localSongs.some((ls) => ls.id === cs.id)) {
             localSongs.unshift(cs);
             sChanged = true;
@@ -1129,6 +1131,8 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
         const localSongs = getAdminSongs();
         let sChanged = false;
         for (const cs of cloudSongs) {
+          const dupIdx = localSongs.findIndex((ls) => String(ls.id).startsWith('song-') && (ls.title||'').toLowerCase() === (cs.title||'').toLowerCase());
+          if (dupIdx !== -1) { localSongs.splice(dupIdx, 1); }
           if (!localSongs.some((ls) => ls.id === cs.id)) {
             localSongs.unshift(cs);
             sChanged = true;
@@ -1768,15 +1772,21 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
   }
   if (cleanPath === '/songs/mine') {
     try {
-      const cloudSongs = await syncAllSongsFromCloud();
+      const allCloud = await syncAllSongsFromCloud();
+      const myName = (currentDemoUser?.stage_name || '').toLowerCase();
+      const myId = currentDemoUser?.id;
+      const cloudSongs = allCloud.filter((cs: any) =>
+        (myName && (cs.artist?.stage_name || '').toLowerCase() === myName) || (myId && cs.artist?.id === myId));
       if (cloudSongs && cloudSongs.length > 0) {
-        const local = getMySongs();
-        let changed = false;
+        let local = getMySongs();
+        // drop local-only copies that now exist in the cloud (same title)
+        const cloudTitles = new Set(cloudSongs.map((c: any) => (c.title || '').toLowerCase()));
+        local = local.filter((ls: any) => !String(ls.id).startsWith('song-') || !cloudTitles.has((ls.title || '').toLowerCase()));
+        let changed = true;
         for (const cs of cloudSongs) {
           const idx = local.findIndex((ls: any) => ls.id === cs.id);
           if (idx === -1) {
             local.unshift(cs);
-            changed = true;
           } else {
             local[idx].status = cs.status;
             local[idx].process_status = cs.process_status;

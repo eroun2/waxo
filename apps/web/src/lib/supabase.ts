@@ -253,20 +253,12 @@ export async function syncSongToCloud(song: any): Promise<boolean> {
 
     if (!artistRows || artistRows.length === 0) {
       // Try resolving by artist email or stage name
+      artistId = undefined;
       const email = song.artist?.email;
       if (email) {
         const u = await supabaseRest<any[]>(`users?email=eq.${encodeURIComponent(email)}&select=id,artist_profile:artist_profiles!artist_profiles_user_id_fkey(id)`);
-        if (u && u[0]?.artist_profile?.[0]?.id) {
-          artistId = u[0].artist_profile[0].id;
-        }
-      }
-    }
-
-    if (!artistId) {
-      // Fallback to first registered artist in database
-      const firstArtist = await supabaseRest<any[]>('artist_profiles?select=id&limit=1');
-      if (firstArtist && firstArtist.length > 0) {
-        artistId = firstArtist[0].id;
+        const ap = Array.isArray(u?.[0]?.artist_profile) ? u![0].artist_profile[0] : u?.[0]?.artist_profile;
+        if (ap?.id) artistId = ap.id;
       }
     }
 
