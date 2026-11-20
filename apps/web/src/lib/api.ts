@@ -17,6 +17,9 @@ import {
   syncAllUsersFromCloud,
   syncSongToCloud,
   syncAllSongsFromCloud,
+  updateArtistApprovalInCloud,
+  updateArtistFlagsInCloud,
+  updateSongStatusInCloud,
 } from './supabase';
 
 export class ApiError extends Error {
@@ -758,14 +761,21 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
       } catch {}
     }
     if (currentDemoUser) {
-      const reg = getRegisteredUsers().find((u) => u.email.toLowerCase() === currentDemoUser!.email.toLowerCase());
-      if (reg) {
-        currentDemoUser.role = reg.role;
-        currentDemoUser.stage_name = reg.stage_name;
-        currentDemoUser.display_name = reg.display_name;
-        currentDemoUser.artist_slug = reg.artist_slug;
-        currentDemoUser.artist_approval = reg.artist_approval;
-        currentDemoUser.artist_verified = reg.artist_verified;
+      if (currentDemoUser.email) {
+        try {
+          const cloud = await syncUserFromCloud(currentDemoUser.email);
+          if (cloud) {
+            currentDemoUser.role = cloud.role;
+            currentDemoUser.stage_name = cloud.stage_name;
+            currentDemoUser.display_name = cloud.display_name;
+            currentDemoUser.artist_slug = cloud.artist_slug;
+            currentDemoUser.artist_approval = cloud.artist_approval;
+            currentDemoUser.artist_verified = cloud.artist_verified;
+            currentDemoUser.email_verified_at = cloud.email_verified_at;
+            saveRegisteredUser(cloud);
+            try { localStorage.setItem('waxo.demo_user', JSON.stringify(currentDemoUser)); } catch {}
+          }
+        } catch {}
       }
       return currentDemoUser as unknown as T;
     }
@@ -787,22 +797,35 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
 
   // Artist personal studio & status
   if (cleanPath === '/artists/me') {
+    let cloud: StoredUser | null = null;
+    if (currentDemoUser?.email) {
+      try {
+        cloud = await syncUserFromCloud(currentDemoUser.email);
+        if (cloud) {
+          saveRegisteredUser(cloud);
+          currentDemoUser.artist_approval = cloud.artist_approval;
+          currentDemoUser.artist_verified = cloud.artist_verified;
+          currentDemoUser.stage_name = cloud.stage_name || currentDemoUser.stage_name;
+          try { localStorage.setItem('waxo.demo_user', JSON.stringify(currentDemoUser)); } catch {}
+        }
+      } catch {}
+    }
     const registered = getRegisteredUsers().find((u) => u.email.toLowerCase() === currentDemoUser?.email.toLowerCase());
     return {
-      id: currentDemoUser?.id || 'art-me',
-      stage_name: registered?.stage_name || currentDemoUser?.stage_name || currentDemoUser?.display_name || 'My Artist Profile',
-      real_name: registered?.real_name || currentDemoUser?.display_name || '',
-      phone: registered?.phone || '',
-      district_id: registered?.district_id || 1,
-      slug: registered?.artist_slug || 'artist',
-      approval_status: registered?.artist_approval || 'active',
+      id: cloud?.id || currentDemoUser?.id || 'art-me',
+      stage_name: cloud?.stage_name || registered?.stage_name || currentDemoUser?.stage_name || currentDemoUser?.display_name || 'My Artist Profile',
+      real_name: cloud?.real_name || registered?.real_name || currentDemoUser?.display_name || '',
+      phone: cloud?.phone || registered?.phone || '',
+      district_id: cloud?.district_id || registered?.district_id || 1,
+      slug: cloud?.artist_slug || registered?.artist_slug || 'artist',
+      approval_status: cloud?.artist_approval || registered?.artist_approval || currentDemoUser?.artist_approval || 'active',
       review_note: null,
       district: 'Kampala',
       district_slug: 'kampala',
-      town: registered?.town || 'Kampala Central',
-      bio: registered?.bio || '',
+      town: cloud?.town || registered?.town || 'Kampala Central',
+      bio: cloud?.bio || registered?.bio || '',
       social_links: {},
-      is_verified: registered?.artist_verified || false,
+      is_verified: cloud?.artist_verified ?? registered?.artist_verified ?? currentDemoUser?.artist_verified ?? false,
       follower_count: 0,
       avatarUrl: null,
       coverUrl: null,
@@ -811,13 +834,19 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
   }
 
   if (cleanPath === '/artists/me/dashboard') {
+    let cloud: StoredUser | null = null;
+    if (currentDemoUser?.email) {
+      try {
+        cloud = await syncUserFromCloud(currentDemoUser.email);
+      } catch {}
+    }
     const mySongs = getMySongs();
     const totalStreams = mySongs.reduce((sum, s: any) => sum + (Number(s.stream_count) || 0), 0);
     const totalDownloads = mySongs.reduce((sum, s: any) => sum + (Number(s.download_count) || 0), 0);
     const totalLikes = mySongs.reduce((sum, s: any) => sum + (Number(s.like_count) || 0), 0);
     const registered = getRegisteredUsers().find((u) => u.email.toLowerCase() === currentDemoUser?.email.toLowerCase());
     return {
-      approvalStatus: registered?.artist_approval || currentDemoUser?.artist_approval || 'active',
+      approvalStatus: cloud?.artist_approval || registered?.artist_approval || currentDemoUser?.artist_approval || 'active',
       songs: {
         live: mySongs.filter((s: any) => s.status === 'approved').length,
         scheduled: mySongs.filter((s: any) => s.status === 'scheduled').length,
@@ -1014,6 +1043,7 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
       }
       recordAudit('song.approved', 'song', 'admin@waxo.com', songId, { title: song.title });
     }
+    await updateSongStatusInCloud(songId, 'approved');
     return { ok: true, id: songId, status: 'approved' } as unknown as T;
   }
   if (cleanPath.startsWith('/admin/songs/') && cleanPath.endsWith('/reject')) {
@@ -1034,6 +1064,7 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
       }
       recordAudit('song.rejected', 'song', 'admin@waxo.com', songId, { reason, title: song.title });
     }
+    await updateSongStatusInCloud(songId, 'rejected', reason);
     return { ok: true, id: songId, status: 'rejected' } as unknown as T;
   }
   if (cleanPath.startsWith('/admin/songs/') && cleanPath.endsWith('/remove')) {
@@ -1054,6 +1085,7 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
       }
       recordAudit('song.removed', 'song', 'admin@waxo.com', songId, { reason, title: song.title });
     }
+    await updateSongStatusInCloud(songId, 'removed');
     return { ok: true, id: songId, status: 'removed' } as unknown as T;
   }
   if (cleanPath.startsWith('/admin/songs/') && cleanPath.endsWith('/feature')) {
@@ -1120,6 +1152,7 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
     const artist = artists.find((a) => a.id === artistId);
     if (artist) {
       artist.approval_status = 'active';
+      artist.is_verified = true;
       artist.reviewed_at = new Date().toISOString();
       artist.review_note = null;
       saveAdminArtists(artists);
@@ -1127,10 +1160,14 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
       const reg = getRegisteredUsers().find((u) => u.id === artistId || u.email.toLowerCase() === artist.email.toLowerCase());
       if (reg) {
         reg.artist_approval = 'active';
+        reg.artist_verified = true;
         saveRegisteredUser(reg);
-      syncUserToCloud(reg).catch(() => undefined);
       }
       recordAudit('artist.approved', 'artist_profile', 'admin@waxo.com', artistId, { stageName: artist.stage_name });
+    }
+    await updateArtistApprovalInCloud(artistId, 'active');
+    if (artist?.email) {
+      await updateArtistApprovalInCloud(artist.email, 'active');
     }
     return { ok: true, id: artistId, status: 'active' } as unknown as T;
   }
@@ -1148,9 +1185,12 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
       if (reg) {
         reg.artist_approval = 'rejected';
         saveRegisteredUser(reg);
-      syncUserToCloud(reg).catch(() => undefined);
       }
       recordAudit('artist.rejected', 'artist_profile', 'admin@waxo.com', artistId, { reason });
+    }
+    await updateArtistApprovalInCloud(artistId, 'rejected', reason);
+    if (artist?.email) {
+      await updateArtistApprovalInCloud(artist.email, 'rejected', reason);
     }
     return { ok: true, id: artistId, status: 'rejected' } as unknown as T;
   }
@@ -1167,9 +1207,12 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
       if (reg) {
         reg.artist_approval = 'suspended';
         saveRegisteredUser(reg);
-      syncUserToCloud(reg).catch(() => undefined);
       }
       recordAudit('artist.suspended', 'artist_profile', 'admin@waxo.com', artistId, { reason });
+    }
+    await updateArtistApprovalInCloud(artistId, 'suspended', reason);
+    if (artist?.email) {
+      await updateArtistApprovalInCloud(artist.email, 'suspended', reason);
     }
     return { ok: true, id: artistId, status: 'suspended' } as unknown as T;
   }
@@ -1185,9 +1228,12 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
       if (reg) {
         reg.artist_approval = 'active';
         saveRegisteredUser(reg);
-      syncUserToCloud(reg).catch(() => undefined);
       }
       recordAudit('artist.reinstated', 'artist_profile', 'admin@waxo.com', artistId);
+    }
+    await updateArtistApprovalInCloud(artistId, 'active');
+    if (artist?.email) {
+      await updateArtistApprovalInCloud(artist.email, 'active');
     }
     return { ok: true, id: artistId, status: 'active' } as unknown as T;
   }
@@ -1195,19 +1241,46 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
     const artistId = cleanPath.replace('/admin/artists/', '').replace('/flags', '');
     const artists = getAdminArtists();
     const artist = artists.find((a) => a.id === artistId);
+    const b = (o.body as any) || {};
     if (artist) {
-      const b = (o.body as any) || {};
       if (b.isFeatured !== undefined) artist.is_featured = !!b.isFeatured;
       if (b.isVerified !== undefined) artist.is_verified = !!b.isVerified;
       saveAdminArtists(artists);
       recordAudit('artist.flags_updated', 'artist_profile', 'admin@waxo.com', artistId, b);
+    }
+    await updateArtistFlagsInCloud(artistId, b);
+    if (artist?.email) {
+      await updateArtistFlagsInCloud(artist.email, b);
     }
     return { ok: true } as unknown as T;
   }
   if (cleanPath.startsWith('/admin/artists/')) {
     const artistId = cleanPath.replace('/admin/artists/', '');
     const artists = getAdminArtists();
-    const found = artists.find((a) => a.id === artistId);
+    let found = artists.find((a) => a.id === artistId || a.email?.toLowerCase() === artistId.toLowerCase());
+    if (!found) {
+      try {
+        const cloudUser = await syncUserFromCloud(artistId);
+        if (cloudUser && cloudUser.role === 'artist') {
+          found = {
+            id: cloudUser.id,
+            stage_name: cloudUser.stage_name || cloudUser.display_name,
+            real_name: cloudUser.real_name || cloudUser.stage_name,
+            slug: cloudUser.artist_slug || 'artist',
+            email: cloudUser.email,
+            email_verified: !!cloudUser.email_verified_at,
+            phone: cloudUser.phone || '',
+            approval_status: cloudUser.artist_approval || 'pending',
+            is_verified: cloudUser.artist_verified || false,
+            is_featured: false,
+            district: 'Kampala',
+            town: cloudUser.town || 'Kampala Central',
+            bio: cloudUser.bio || '',
+            created_at: new Date().toISOString(),
+          };
+        }
+      } catch {}
+    }
     if (!found) throw new ApiError(404, 'Artist not found');
     return {
       id: found.id,
@@ -1244,6 +1317,38 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
           else { local[idx] = { ...local[idx], ...cu }; changed = true; }
         }
         if (changed) try { localStorage.setItem('waxo.registered_users', JSON.stringify(local)); } catch {}
+
+        const adminArtists = getAdminArtists();
+        let aChanged = false;
+        for (const cu of cloudUsers.filter((u) => u.role === 'artist')) {
+          const existing = adminArtists.find((a) => a.id === cu.id || a.email?.toLowerCase() === cu.email.toLowerCase());
+          if (existing) {
+            existing.approval_status = cu.artist_approval || existing.approval_status || 'pending';
+            existing.is_verified = cu.artist_verified !== null && cu.artist_verified !== undefined ? cu.artist_verified : existing.is_verified;
+            existing.stage_name = cu.stage_name || existing.stage_name;
+            aChanged = true;
+          } else {
+            adminArtists.unshift({
+              id: cu.id,
+              stage_name: cu.stage_name || cu.display_name,
+              real_name: cu.real_name || cu.stage_name || cu.display_name,
+              slug: cu.artist_slug || 'artist',
+              email: cu.email,
+              email_verified: !!cu.email_verified_at,
+              phone: cu.phone || '',
+              approval_status: cu.artist_approval || 'pending',
+              is_verified: cu.artist_verified || false,
+              is_featured: false,
+              district: 'Kampala',
+              town: cu.town || 'Kampala Central',
+              bio: cu.bio || '',
+              follower_count: 0,
+              created_at: new Date().toISOString(),
+            });
+            aChanged = true;
+          }
+        }
+        if (aChanged) saveAdminArtists(adminArtists);
       }
     } catch {}
 
@@ -1650,6 +1755,28 @@ async function getMockResponse<T>(path: string, o: Opts = {}): Promise<T | undef
     } as unknown as T;
   }
   if (cleanPath === '/songs/mine') {
+    try {
+      const cloudSongs = await syncAllSongsFromCloud();
+      if (cloudSongs && cloudSongs.length > 0) {
+        const local = getMySongs();
+        let changed = false;
+        for (const cs of cloudSongs) {
+          const idx = local.findIndex((ls: any) => ls.id === cs.id);
+          if (idx === -1) {
+            local.unshift(cs);
+            changed = true;
+          } else {
+            local[idx].status = cs.status;
+            local[idx].process_status = cs.process_status;
+            local[idx].stream_count = cs.stream_count;
+            local[idx].download_count = cs.download_count;
+            changed = true;
+          }
+        }
+        if (changed) saveMySongs(local);
+      }
+    } catch {}
+
     const status = sp.get('status');
     const mySongs = getMySongs();
     const items = status ? mySongs.filter((s: any) => s.status === status) : mySongs;

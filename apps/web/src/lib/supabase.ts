@@ -340,3 +340,108 @@ export async function syncAllSongsFromCloud(): Promise<any[]> {
     return [];
   }
 }
+
+/**
+ * Updates an artist profile's approval status directly in Supabase PostgreSQL.
+ * Matches by artist profile id, user id, or email.
+ */
+export async function updateArtistApprovalInCloud(
+  identifier: string,
+  status: 'active' | 'rejected' | 'suspended',
+  reviewNote?: string | null,
+  isVerified?: boolean
+): Promise<boolean> {
+  try {
+    const body: any = {
+      approval_status: status,
+      reviewed_at: new Date().toISOString(),
+      review_note: reviewNote || null,
+    };
+    if (status === 'active' || isVerified) {
+      body.is_verified = true;
+    }
+
+    // 1. Try updating by artist_profiles.id
+    let res = await supabaseRest(`artist_profiles?id=eq.${encodeURIComponent(identifier)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    });
+
+    // 2. Try updating by artist_profiles.user_id
+    if (!res || (Array.isArray(res) && res.length === 0)) {
+      res = await supabaseRest(`artist_profiles?user_id=eq.${encodeURIComponent(identifier)}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      });
+    }
+
+    // 3. If identifier might be an email, look up user_id
+    if (!res || (Array.isArray(res) && res.length === 0)) {
+      const u = await supabaseRest<any[]>(`users?email=eq.${encodeURIComponent(identifier.toLowerCase())}&select=id`);
+      if (u && u[0]?.id) {
+        await supabaseRest(`artist_profiles?user_id=eq.${u[0].id}`, {
+          method: 'PATCH',
+          body: JSON.stringify(body),
+        });
+      }
+    }
+
+    return true;
+  } catch (err) {
+    console.warn('[Supabase] Failed to update artist approval in cloud:', err);
+    return false;
+  }
+}
+
+/**
+ * Updates artist verification / featured flags in Supabase PostgreSQL.
+ */
+export async function updateArtistFlagsInCloud(
+  identifier: string,
+  flags: { isFeatured?: boolean; isVerified?: boolean }
+): Promise<boolean> {
+  try {
+    const body: any = {};
+    if (flags.isFeatured !== undefined) body.is_featured = !!flags.isFeatured;
+    if (flags.isVerified !== undefined) body.is_verified = !!flags.isVerified;
+
+    let res = await supabaseRest(`artist_profiles?id=eq.${encodeURIComponent(identifier)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    });
+    if (!res || (Array.isArray(res) && res.length === 0)) {
+      await supabaseRest(`artist_profiles?user_id=eq.${encodeURIComponent(identifier)}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      });
+    }
+    return true;
+  } catch (err) {
+    console.warn('[Supabase] Failed to update artist flags in cloud:', err);
+    return false;
+  }
+}
+
+/**
+ * Updates song moderation status in Supabase PostgreSQL.
+ */
+export async function updateSongStatusInCloud(
+  songId: string,
+  status: string,
+  _rejectionReason?: string | null
+): Promise<boolean> {
+  try {
+    const body: any = {
+      status,
+      process_status: status === 'approved' ? 'ready' : undefined,
+    };
+    await supabaseRest(`songs?id=eq.${encodeURIComponent(songId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    });
+    return true;
+  } catch (err) {
+    console.warn('[Supabase] Failed to update song status in cloud:', err);
+    return false;
+  }
+}
