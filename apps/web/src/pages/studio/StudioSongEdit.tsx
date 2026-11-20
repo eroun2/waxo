@@ -57,7 +57,7 @@ export default function StudioSongEdit() {
   };
   const remove = async () => {
     setBusy(true);
-    try { await api(`/songs/${s.id}`, { method: 'DELETE' }); nav('/studio/songs', { replace: true }); }
+    try { await api(`/songs/${s.id}`, { method: 'DELETE' }); nav('/studio/songs', { replace: true, state: { songDeleted: true } }); }
     catch (err) { setMsg({ ok: false, text: (err as Error).message }); setBusy(false); }
   };
 

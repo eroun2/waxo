@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams, useLocation } from 'react-router-dom';
 import { Upload } from 'lucide-react';
 import { qs } from '../../lib/api';
 import { usePaged } from '../../lib/hooks';
@@ -14,7 +14,16 @@ export default function StudioSongs() {
   const { artist } = useStudio();
   const [sp, setSp] = useSearchParams();
   const status = sp.get('status') ?? '';
+  const location = useLocation();
   const p = usePaged<SongMine>(`/songs/mine${qs({ status })}`);
+
+  useEffect(() => {
+    if (location.state?.songDeleted) {
+      p.reload();
+      // Clear the state to prevent re-reloading if the user navigates away and back
+      window.history.replaceState({}, document.title, location.pathname + location.search);
+    }
+  }, [location.state?.songDeleted, p, location.pathname, location.search]);
 
   // Keep processing songs fresh without a manual refresh.
   const busy = p.items.some((s) => s.status === 'processing' || s.process_status === 'queued' || s.process_status === 'processing');
